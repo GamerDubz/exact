@@ -35,7 +35,7 @@ import { openTouches, realTap, springboard } from '../host/apple/touches.mjs';
 import { pageAim, namedRefusal } from './agent-aim.mjs'; import { checkOp } from './agent-check.mjs'; import { compareScreenshot, referenceNote } from './agent-compare.mjs';
 import { parseDrag, dragArguments, dragTap, duringAllowed, duringOp, heldDown, heldPhase, heldRead, holdTap, fileDrag, folderTree, driverFiles } from './agent-drag.mjs';
 import { peekLogs, takeWorldLogs, driveNotes, STORAGE_REFUSED, STORAGE_NOTE, runTests, nodeNamed, targetsIn, unopenedHint, refuseDisabled, reloadWeb, fetchOrigins, loopbackOrigins, faultRequest } from './agent-test.mjs';
-import { MalformedOperation, operationReply, inputJSON, keyArguments, validateKey, pointerArguments, resizeArguments, cdpKey, browserKey, nativeKey, typeFor, ticketOf, holdOf, heldTicket, typeArguments, typeCommand, pickedPaths, mouseContact, withHeldModifiers, pasteChord, deliverClipboard, tapWords, tapArguments, pointerGap, chordModifiers, withChordModifiers, heldForClick, clockSlices, padOp, postCommand, postInto } from './agent-keys.mjs';
+import { MalformedOperation, operationReply, inputJSON, keyArguments, validateKey, pointerArguments, resizeArguments, cdpKey, browserKey, nativeKey, typeFor, ticketOf, holdOf, heldTicket, typeArguments, typeCommand, pickedPaths, mouseContact, withHeldModifiers, pasteChord, deliverClipboard, tapWords, tapArguments, pointerGap, chordModifiers, withChordModifiers, heldForClick, clockSlices, padOp, postCommand, postInto, refuseDriveFlag } from './agent-keys.mjs';
 import { jsonLines, hangup, waitAtMost, bootRefusal, simulatorConsole, REPLY_MS, AWAY } from './agent-wire.mjs';
 import { openStdio } from './agent-stdio.mjs'; import { appShareTarget, driverShare, webShareLocation } from './share-target.mjs';
 import { heldClock, inFlightNote, untilClock } from './agent-held.mjs';
@@ -957,12 +957,11 @@ export async function open({onProcess, host = 'web', browser, plan, world, size,
       if (gap) return s.tagged({ tapped: node.id, target, delivery: 'unsupported', reason: gap, carrier: host, mode: timing });
       // A plain press at a point (`tap <target> at <x> <y>`): whatever a finger there reaches, as for a click.
       const pressAt = !button.length && !opts.wheel && opts.down !== true && opts.pinch === undefined && !opts.drag && opts.at !== undefined;
-      if ((button.length || opts.wheel || pressAt) && opts.at !== undefined) {
-        const form = button[0] ?? (opts.wheel ? 'wheel' : 'a press');
+      const form = (button.length || opts.wheel || pressAt) && opts.at !== undefined ? button[0] ?? (opts.wheel ? 'wheel' : 'a press') : null;
+      if (form) {
         if (!['web', 'linux', 'android', 'windows', 'macos', 'mac', 'host', ...(pressAt || ['contextmenu', 'dblclick'].includes(form) ? ['ios', 'host-ios'] : [])].includes(host)) throw new Error(`${host} does not carry ${form} at an explicit point`); // iOS: a press, and the long press and double tap that select text there
-        const layout = await s.layout(), b = layout.nodes.find(n => n.id === node.id), [x, y] = opts.at;
+        const b = (await s.layout()).nodes.find(n => n.id === node.id), [x, y] = opts.at;
         if (!b || x < 0 || y < 0 || x >= b.w || y >= b.h) throw new Error(`${form} at must be inside the target box`);
-        if (layout.viewport && (b.x + x < 0 || b.y + y < 0 || b.x + x >= layout.viewport.w || b.y + y >= layout.viewport.h)) throw new Error(`${form} at is outside the viewport`);
       }
       if (opts.pinch !== undefined && !['web', 'ios', 'macos', 'mac'].includes(host)) return s.tagged({ tapped: node.id, target, pinch: opts.pinch, delivery: 'unsupported', reason: `${host} has no pinch`, carrier: host, mode: timing });
       // A list's row by key: the runner's request on every carrier, not an input.
@@ -973,13 +972,16 @@ export async function open({onProcess, host = 'web', browser, plan, world, size,
       // A target out of view is scrolled into it first, as a person (and Playwright's actionability) would.
       // An explicit contact point (`drag … from`, `down at`) is the author's: a visible one is not moved; one out of view
       // brings its view's middle in, as an unspecified point would (the host's reveal scrolls a view, not a point).
-      const explicit = opts.drag?.from ?? opts.at, pointOut = async () => {
+      // A point out of view after that (a view taller than the viewport, or a wheel, which reveals nothing) is refused, named.
+      const explicit = opts.drag?.from ?? opts.at, pointOut = async (point = explicit) => {
         const l = await s.layout(), b = l.nodes.find((n) => n.id === node.id), vp = l.viewport;
         if (!b || !vp) return false;
-        const x = b.x + explicit[0], y = b.y + explicit[1];
-        return x < 0 || y < 0 || x > vp.w || y > vp.h;
+        const x = b.x + point[0], y = b.y + point[1];
+        return (x < 0 || y < 0 || x >= vp.w || y >= vp.h) && { x, y, vp };
       };
       const scrolled = opts.wheel || opts.history !== undefined || (explicit && !await pointOut()) ? null : await s.reveal(node.id);
+      const out = form && await pointOut(opts.at);
+      if (out) throw new Error(`${form} at ${opts.at.join(' ')} lands at (${out.x}, ${out.y}), outside the ${out.vp.w}×${out.vp.h} viewport${scrolled ? ' after the view scrolled in' : ''}: scroll the point into view first, or name one nearer the view's middle`);
       // One whole gesture: press, one straight drag, hold, lift.
       if (opts.drag) return dragTap({ s, carrier, node, target, host, timing, tapRefusal, scrolled }, opts.drag); if (opts.holdState !== undefined) return holdTap({ s, node, target, host, timing, tapRefusal, scrolled }, opts.holdState); // a held state
       const kind = opts.history !== undefined ? 'history' : opts.pinch !== undefined ? 'pinch' : opts.down ? 'down' : opts.drop ? 'drop' : opts.dragenter ? 'dragenter' : opts.dragleave ? 'dragleave' : opts.wheel ? 'wheel' : opts.hover ? 'hover' : button[0] ?? 'press';
@@ -1112,7 +1114,8 @@ export async function open({onProcess, host = 'web', browser, plan, world, size,
       if (held?.device?.capability !== 'pick') return s.landed(await s.op({ op, ticket, text: String(value) }));
       const paths = pickedPaths(value).map(p => resolve(p));
       const missing = paths.find(p => !existsSync(p) || !statSync(p).isFile());
-      if (missing) throw new Error(`type ${target}: no such file ${missing}`);
+      const spaced = !String(value).includes('\n') && /\s/.test(String(value).trim()); // split at its spaces: `pick` keeps one path whole
+      if (missing) throw new Error(`type ${target}: no such file ${missing}${spaced ? `; \`type @\` takes paths apart at each space, and \`pick ${target} ${JSON.stringify(String(value).trim())}\` keeps a path with a space whole` : ''}`);
       const req = { op, ticket, text: paths.join('\n') + '\n' };
       if (host === 'web') req.files = paths.map(p => ({ name: basename(p), bytes: readFileSync(p).toString('base64') }));
       return s.landed(await s.op(req));
@@ -1396,11 +1399,12 @@ export async function main(argv, injected = {}) {
       let r, how;
       switch (op) {
         case 'tree': r = args[0] === '--ax' ? await s.tree(args[1], {ax: true}) : await s.tree(args[0], args[1] === 'under' ? args[2] : undefined); break;
-        case 'state': { const words = args.filter((a) => a !== '--full'); how = { full: words.length < args.length, name: words[0] }; r = await stateOp(s, words); break; } // over STATE_CAP, its sections' sizes unless --full
+        case 'state': { refuseDriveFlag(host, op, args, ['--full']); const words = args.filter((a) => a !== '--full'); how = { full: words.length < args.length, name: words[0] }; r = await stateOp(s, words); break; } // over STATE_CAP, its sections' sizes unless --full
         case 'reload': if (args.length) throw new MalformedOperation('reload takes no arguments'); r = await reloadWeb(s); break;
         case 'logs': if (args.some(a => a !== '--all')) throw new MalformedOperation('logs [--all]'); r = await s.logs({all: args.includes('--all')}); break;
         case 'layout': r = await s.layout(...layoutArgs(args)); break;
         case 'screenshot':
+          refuseDriveFlag(host, op, args); // `"screenshot x.png --scale 3"`: --scale is the drive's
           if (args.includes('compare') || args[2] === 'from') r = await (args[2] === 'from' ? worldLook : compareScreenshot)(s, args); // `from`: a world's look frame
           else if (args[1] === 'over') {
             if (args[3] !== 'every' || !(args.length === 5 || args.length === 6 && args[5] === 'window')) throw new MalformedOperation('screenshot <png|apng> over <ms> every <ms> [window]');

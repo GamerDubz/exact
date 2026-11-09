@@ -87,7 +87,7 @@ async function release() {
     `Detection test: ${report?.detection ?? 'not run'}.`, '', '<details><summary>Token diff</summary>', '', '```', tokens.slice(0, 400).join('\n'), '```', '</details>'].join('\n');
   if (dry) return log(body);
   git(['push', '-q', '-f', 'origin', `HEAD:refs/heads/${branch}`], dir);
-  const issue = run('gh', ['issue', 'create', '--repo', 'expo/exact-release', '--title', `Compose Material 3 ${latest} is out: the Material oracle's work list`, '--body', body], dir);
+  const issue = run('gh', ['issue', 'create', '--repo', 'expo/exact', '--title', `Compose Material 3 ${latest} is out: the Material oracle's work list`, '--body', body], dir);
   if (issue.status !== 0) throw new Error(`gh issue create: ${issue.stderr}`);
   log(`filed ${issue.stdout.trim()}`);
   state.filed.push(latest);
@@ -114,7 +114,7 @@ function regression() {
 ].join('\n');
     if (dry) log(body);
     else {
-      const issue = run('gh', ['issue', 'create', '--repo', 'expo/exact-release', '--title', `Material oracle: ${lost.length ? `${lost.length} specimen(s) regressed` : 'detection test failed'} at ${tip.slice(0, 9)}`, '--body', body], root);
+      const issue = run('gh', ['issue', 'create', '--repo', 'expo/exact', '--title', `Material oracle: ${lost.length ? `${lost.length} specimen(s) regressed` : 'detection test failed'} at ${tip.slice(0, 9)}`, '--body', body], root);
       log(issue.status === 0 ? `filed ${issue.stdout.trim()}` : `gh issue create: ${issue.stderr}`);
     }
   } else log(`oracle: ${report.failing.length} of ${report.total} differ; nothing regressed`);

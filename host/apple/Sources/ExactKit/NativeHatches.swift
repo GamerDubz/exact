@@ -421,6 +421,17 @@ extension NativeViews {
         }
     }
 
+    /// Refresh an app-owned container's click targets without rebuilding its stacks
+    func tabNodesChanged(_ nodes: [UInt32]) {
+        guard hatchesConnected, let instance, let (_, container) = tabCalls,
+              let json = try? JSONSerialization.data(withJSONObject: ["refresh": true, "nodes": nodes]) else { return }
+        timedHatch("tabContainer", "changed") {
+            _ = json.withUnsafeBytes { bytes in
+                container(instance, bytes.bindMemory(to: UInt8.self).baseAddress, UInt32(json.count), nil, 0)
+            }
+        }
+    }
+
     /// One hatch call: under the crash breadcrumb, production included,
     /// and timed by the session's store in a development build.
     func timedHatch<T>(_ scope: String, _ moment: String, site: Int? = nil, counts: Bool = true, _ body: () -> T) -> T {

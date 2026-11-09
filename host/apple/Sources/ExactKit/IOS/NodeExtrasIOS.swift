@@ -149,7 +149,8 @@ final class NodeExtras {
     var scrollCornered = false
     var focusRing: CAShapeLayer?
     var scrollEventQueued: Bool = false
-    var lastScrollEvent: (offset: CGPoint, topInset: CGFloat) = (.zero, 0)
+    /// The last `scroll` event's values (`sendScrollEvent`).
+    var lastScrollEvent: [Double] = []
     var dispatchingScrollEvent: Bool = false
     var scrollEnd: ScrollEnd?
     var beforeLayoutScroll: (offset: CGPoint, topInset: CGFloat)?
@@ -187,6 +188,8 @@ final class NodeExtras {
     var pageBand = UIEdgeInsets.zero
     /// The part of the band its scroll view's `contentInset` holds.
     var bandInset = UIEdgeInsets.zero
+    /// The bottom inset a keyboard toolbar gives its scroll view (`KeyboardToolbarIOS.swift`).
+    var keyboardInset: CGFloat = 0
     /// A control bar over a scroller's content: the scroller's paint rank, which it is placed
     /// above, and UIKit's edge effect.
     var bandOver: Int64?
@@ -363,7 +366,7 @@ extension NodeView {
     var scrollCornered: Bool { get { extras?.scrollCornered ?? false } set { if newValue || extras != nil { more.scrollCornered = newValue } } }
     var focusRing: CAShapeLayer? { get { extras?.focusRing } set { if newValue != nil || extras != nil { more.focusRing = newValue } } }
     var scrollEventQueued: Bool { get { extras?.scrollEventQueued ?? false } set { if newValue || extras != nil { more.scrollEventQueued = newValue } } }
-    var lastScrollEvent: (offset: CGPoint, topInset: CGFloat) { get { extras?.lastScrollEvent ?? (.zero, 0) } set { if newValue.offset != .zero || newValue.topInset != 0 || extras != nil { more.lastScrollEvent = newValue } } }
+    var lastScrollEvent: [Double] { get { extras?.lastScrollEvent ?? [] } set { if !newValue.isEmpty || extras != nil { more.lastScrollEvent = newValue } } }
     var dispatchingScrollEvent: Bool { get { extras?.dispatchingScrollEvent ?? false } set { if newValue || extras != nil { more.dispatchingScrollEvent = newValue } } }
     var scrollEnd: ScrollEnd? { get { extras?.scrollEnd } set { if newValue != nil || extras != nil { more.scrollEnd = newValue } } }
     var beforeLayoutScroll: (offset: CGPoint, topInset: CGFloat)? { get { extras?.beforeLayoutScroll } set { if newValue != nil || extras != nil { more.beforeLayoutScroll = newValue } } }
@@ -433,9 +436,13 @@ extension NodeView {
     /// UIKit insets, the port between the insets the kernel lays its content
     /// out in, so a page shorter than that port does not
     /// scroll by the bar and the home indicator, as a table view's does not.
+    /// A keyboard toolbar's inset leaves the port too: a short transcript
+    /// rises only by what the keyboard would cover of its rows, as a
+    /// collection view's does, not by the whole keyboard.
     func scrollFloor(_ sv: UIScrollView) -> CGFloat {
-        guard case .inset(let top, let bottom)? = presenter?.navigation.covers[id] else { return sv.bounds.height - pageBand.top - pageBand.bottom }
-        return max(0, sv.bounds.height - top - bottom - pageBand.top - pageBand.bottom)
+        let keyboard = extras?.keyboardInset ?? 0
+        guard case .inset(let top, let bottom)? = presenter?.navigation.covers[id] else { return max(0, sv.bounds.height - pageBand.top - pageBand.bottom - keyboard) }
+        return max(0, sv.bounds.height - top - bottom - pageBand.top - pageBand.bottom - keyboard)
     }
 }
 extension UIColor {

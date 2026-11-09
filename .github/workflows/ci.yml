@@ -51,6 +51,12 @@ jobs:
       - name: Bun dependencies
         run: bun install --frozen-lockfile
 
+      - name: Cargo dependencies
+        # caps's wasm check lists and checks the web crates offline, so the registry
+        # must already hold every crate: nothing before this step fetches them, and the
+        # Rust cache is only saved by a job that passed.
+        run: cargo fetch --locked
+
       - name: fmt
         run: cargo fmt --all -- --check
 

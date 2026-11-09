@@ -233,7 +233,7 @@ EOF
   put $UNIT 0644 root:root <<EOF
 [Unit]
 Description=tamber relay (SNI pass-through for tamber serve --relay)
-Documentation=https://github.com/expo/exact-release/blob/main/docs/tamber-relay-service.md
+Documentation=https://github.com/expo/exact/blob/main/docs/tamber-relay-service.md
 After=network-online.target
 Wants=network-online.target
 

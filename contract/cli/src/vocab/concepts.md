@@ -980,6 +980,10 @@ component App
   false`, React Navigation's `hideWhenScrolling={false}`).
 - `flex-wrap` and `width="100%"` give the field its own line on the web; iOS places it
   itself. A field in the content with a Search button beside it is a web form's, a tell.
+- While the person searches, iOS hides the bar and its buttons
+  (`hidesNavigationBarDuringPresentation`). In a sheet whose bar holds Save or Send, put the
+  field in the content, above the list, so the bar stays; in a half-height sheet on iOS 26
+  the bar's field also sits at the sheet's bottom edge.
 - A test types the query: `type "search" "gro"`, and `type "search" ""` to clear it.
 
 The same field queries a server when a `resource` takes the query as its argument: each
@@ -1320,6 +1324,41 @@ component App
 ```
 
 More: docs/contract-grammar.md (`use`, its paths and packages)
+
+## members: a component's members written in another file
+names: members file
+
+`members "./typing.contract"` in a component's body stands for the block that file declares
+under `members App`, as if written at that line: `state`, `derive`, `resource`, `mutation`,
+`action`, `task` and `sequence`. The once-only sections (`props`, `view`) stay in the
+component. Beside its block, the file may declare shapes, `fn`s and components: its block
+calls them as they are, and another file, the root among them, names them on a `use` line.
+
+```text
+// app.contract
+use TypingRow from "./typing.contract"
+
+component App
+  members "./typing.contract"
+  view
+    column
+      input value=typing input=typed aria-label="Message"
+      TypingRow(who=typing)
+
+// typing.contract
+members App
+  state typing = ""
+  action typed(v: string)
+    typing = v
+
+component TypingRow
+  props
+    who: string
+  view
+    text who
+```
+
+More: docs/contract-grammar.md (members files); apps/excord/viewer.contract
 
 ## svg: a vector drawing (an icon, a chart, a QR code)
 names: Svg, vector, react-native-svg, expo-svg, SvgXml, Path, Circle, Rect, drawing

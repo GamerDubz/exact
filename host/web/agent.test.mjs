@@ -1154,6 +1154,20 @@ test('a pick answer keeps a path with a space when it comes one per line', () =>
   expect(pickedPaths('a.png b.png')).toEqual(['a.png', 'b.png']);
 });
 
+test('a typed pick answer split at a space names the pick step that keeps the path whole', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'exact-pick-space-')), file = join(dir, 'Trip plan.pdf'), sent = [];
+  writeFileSync(file, 'pdf');
+  const pending = [{ name: 'pick-files', ticket: 3, device: { capability: 'pick', args: { id: 'pick-files' } } }];
+  const s = await open({ reuse: { host: 'web', browser: 'chrome', launchFacts: launchFacts({}), reset() {},
+    async ask(req) { if (req.op === 'type') sent.push(req.text); return req.op === 'state' ? { pending } : { typed: 3 }; } } });
+  try {
+    await expect(s.type('@pick-files', file)).rejects.toThrow(`type @pick-files: no such file ${join(dir, 'Trip')}; \`type @\` takes paths apart at each space, and \`pick @pick-files ${JSON.stringify(file)}\` keeps a path with a space whole`);
+    await expect(s.type('@pick-files', join(dir, 'none.pdf'))).rejects.toThrow(/no such file \S+none\.pdf$/);
+    await s.type('@pick-files', `${file}\n`); // what that `pick` sends
+    expect(sent).toEqual([`${file}\n`]);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('a mouse drag presses and releases the left button on the web', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'exact-mouse-drag-')), contract = join(dir, 'app.contract'), plan = join(dir, 'app.plan'), dist = join(dir, 'dist');
   writeFileSync(contract, `component MouseDrag
@@ -1304,6 +1318,30 @@ await exclusiveIOS('sim','app',async()=>({close:async()=>{}}),${JSON.stringify(o
       second = await exclusiveIOS('sim', 'app', launch('after death'), options); await second.close();
     } finally { child.kill('SIGKILL'); await exited; }
   } finally { await first?.close(); await second?.close(); await other?.close(); rmSync(directory,{recursive:true,force:true}); }
+}, 60000);
+test('an install outside a drive waits for the drive of each app it installs, and a drive waits for the install', async () => {
+  const { exclusiveIOS, simulatorApps } = await import('../../scripts/agent-launch.mjs');
+  const directory = mkdtempSync(join(tmpdir(), 'exact-drive-lock-')), events = [], said = [], error = console.error;
+  const options = { directory, timeout: 1000 }, drive = label => async () => ({ close: async () => events.push('close ' + label) });
+  let held;
+  console.error = (line) => said.push(line);
+  try {
+    held = await exclusiveIOS('sim', 'app', drive('app'), options);
+    const installing = simulatorApps('sim', ['app', 'app.host'], async () => {
+      events.push('install');
+      await expect(exclusiveIOS('sim', 'app.host', drive('host'), { ...options, timeout: 0 })).rejects.toThrow('iOS drive busy');
+    }, { ...options, name: 'iPhone' });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    expect(events).toEqual([]);
+    await held.close(); held = null; await installing;
+    expect(events).toEqual(['close app', 'install']);
+    expect(said).toEqual(['waiting for the drive of app on iPhone to end before installing over it']);
+    held = await exclusiveIOS('sim', 'app.host', drive('host'), options);
+    await expect(simulatorApps('sim', ['app', 'app.host'], () => events.push('never'), { ...options, timeout: 0, name: 'iPhone' }))
+      .rejects.toThrow('iPhone still runs a drive of app.host after 0s: install when it ends, or on another simulator (--sim <udid|name>, or EXACT_SIM)');
+    await held.close(); held = await exclusiveIOS('sim', 'app', drive('app'), { ...options, timeout: 0 });
+    expect(events).toEqual(['close app', 'install', 'close host']);
+  } finally { console.error = error; await held?.close(); rmSync(directory, { recursive: true, force: true }); }
 }, 60000);
 test('tap parses every mouse form, refuses a word it does not use, and a carrier that cannot deliver one says unsupported (#107)', async () => {
   const { tapWords: t, pointerGap: gap } = await import('../../scripts/agent.mjs'); expect(t(['p', 'auxclick', 'at', '30', '40', 'modifiers', 'Meta'])).toEqual(['p', { auxclick: true, at: [30, 40], modifiers: 'Meta' }]); expect(t(['p', 'clicks', '3'])).toEqual(['p', { clicks: 3 }]); expect(t(['p', 'wheel', '0', '20', 'at', '10', '10'])).toEqual(['p', { wheel: [0, 20], at: [10, 10] }]); expect(t(['p', 'down', 'at', '10', '20', 'modifiers', 'Shift'])).toEqual(['p', { down: true, at: [10, 20], modifiers: 'Shift' }]); expect(t(['up', 'modifiers', 'Shift'], true)).toEqual([null, { phase: 'up', modifiers: 'Shift' }]); for (const words of [['p', 'mouse', 'foo'], ['p', 'auxclick', 'at', '1'], ['p', 'hover', 'x'], ['p', 'clicks'], ['p', 'frob']]) expect(() => t(words)).toThrow(/unknown word|takes a number/); expect(gap('macos', undefined, { auxclick: true })).toBeNull(); expect(gap('web', 'chrome', { clicks: 3, modifiers: 'Shift', down: true })).toBeNull(); for (const host of ['linux', 'windows', 'ios']) expect(gap(host, undefined, { wheel: [0, 1], at: [1, 1] })).toContain('a wheel at a point'); expect(gap('web', 'firefox', { drag: { modifiers: 'Shift' } })).toContain('modifiers'); });

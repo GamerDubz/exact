@@ -53,7 +53,12 @@ extension NodeView {
     }
     #endif
 
-    var accessibleText: String {
+    /// Its words: the text it shows, its descendants' joined.
+    var accessibleText: String { contentText(naming: false) }
+    /// `naming`: accname's name from content (step 2F), in which a
+    /// descendant's own label stands for its content, so a labelled image
+    /// inside a link counts in the link's name, as on the web.
+    private func contentText(naming: Bool) -> String {
         // A Markdown text reads as its words, each inline atom its accessible name.
         if let text = props["text"], props["markup"] == "markdown", !(props["atoms"] ?? "").isEmpty, let plain = MarkdownLink.installed?.plain(text, range: nil, atoms: props["atoms"] ?? "", faces: props["atomFaces"] ?? "", spoken: true) { return plain }
         if let text = props["text"] { return text }
@@ -63,7 +68,7 @@ extension NodeView {
         if isParagraph { return visibleParagraphText }
         // accname: an `aria-hidden` child names nothing (a tab's icon glyph).
         let children = container.subviews.compactMap { $0 as? NodeView }.filter { $0.props["accessibilityElementsHidden"] != "true" }
-        return children.map(\.accessibleText).filter { !$0.isEmpty }.joined(separator: " ")
+        return children.map { naming ? $0.authoredLabel ?? $0.contentText(naming: true) : $0.accessibleText }.filter { !$0.isEmpty }.joined(separator: " ")
     }
     /// Its `aria-labelledby` text, else its `aria-label`, unless empty
     /// (accname: an empty label names nothing).
@@ -78,7 +83,7 @@ extension NodeView {
             .filter { !$0.isEmpty }.joined(separator: " ")
         return text.isEmpty ? nil : text
     }
-    var accessibleName: String { authoredLabel ?? accessibleText }
+    var accessibleName: String { authoredLabel ?? contentText(naming: true) }
     #if !os(macOS)
     /// Referenced labels can arrive or disappear without an image props update.
     func updateImageAccessibility() {
@@ -330,10 +335,22 @@ final class FieldCell: NSTextFieldCell {
         return node?.presenter?.fieldEditor ?? super.fieldEditor(for: controlView)
     }
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
-        (controlView?.superview as? NodeView)?.nativeEditorRect(in: rect) ?? super.drawingRect(forBounds: rect)
+        let node = controlView?.superview as? NodeView, appKit = super.drawingRect(forBounds: rect)
+        return node?.nativeEditorRect(in: rect) ?? node?.authoredEditorRect(appKit, in: rect) ?? appKit
     }
     override func titleRect(forBounds rect: NSRect) -> NSRect {
-        (controlView?.superview as? NodeView)?.nativeEditorRect(in: rect) ?? super.titleRect(forBounds: rect)
+        let node = controlView?.superview as? NodeView, appKit = super.titleRect(forBounds: rect)
+        return node?.nativeEditorRect(in: rect) ?? node?.authoredEditorRect(appKit, in: rect) ?? appKit
+    }
+    /// A borderless cell puts the field editor at the rect it is given (the
+    /// field's bounds), not at its drawing rect: an author-drawn field's
+    /// editor gets its line's rect, so the text and the placeholder stand
+    /// where the cell draws them while it is edited too.
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(withFrame: (controlView.superview as? NodeView)?.authoredEditorRect(rect, in: rect) ?? rect, in: controlView, editor: textObj, delegate: delegate, start: selStart, length: selLength)
+    }
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: (controlView.superview as? NodeView)?.authoredEditorRect(rect, in: rect) ?? rect, in: controlView, editor: textObj, delegate: delegate, event: event)
     }
     override func accessibilityAttributeNames() -> [NSAccessibility.Attribute] {
         super.accessibilityAttributeNames() + NodeView.ariaAttributes.filter { (controlView?.superview as? NodeView)?.ariaAttribute($0) != nil }.map { .init(rawValue: $0) }
@@ -366,10 +383,19 @@ final class FieldCell: NSTextFieldCell {
 /// A password field's, as `FieldCell`.
 final class SecureFieldCell: NSSecureTextFieldCell {
     override func drawingRect(forBounds rect: NSRect) -> NSRect {
-        (controlView?.superview as? NodeView)?.nativeEditorRect(in: rect) ?? super.drawingRect(forBounds: rect)
+        let node = controlView?.superview as? NodeView, appKit = super.drawingRect(forBounds: rect)
+        return node?.nativeEditorRect(in: rect) ?? node?.authoredEditorRect(appKit, in: rect) ?? appKit
     }
     override func titleRect(forBounds rect: NSRect) -> NSRect {
-        (controlView?.superview as? NodeView)?.nativeEditorRect(in: rect) ?? super.titleRect(forBounds: rect)
+        let node = controlView?.superview as? NodeView, appKit = super.titleRect(forBounds: rect)
+        return node?.nativeEditorRect(in: rect) ?? node?.authoredEditorRect(appKit, in: rect) ?? appKit
+    }
+    /// As `FieldCell`'s.
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {
+        super.select(withFrame: (controlView.superview as? NodeView)?.authoredEditorRect(rect, in: rect) ?? rect, in: controlView, editor: textObj, delegate: delegate, start: selStart, length: selLength)
+    }
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: (controlView.superview as? NodeView)?.authoredEditorRect(rect, in: rect) ?? rect, in: controlView, editor: textObj, delegate: delegate, event: event)
     }
     override func accessibilityAttributeNames() -> [NSAccessibility.Attribute] {
         super.accessibilityAttributeNames() + NodeView.ariaAttributes.filter { (controlView?.superview as? NodeView)?.ariaAttribute($0) != nil }.map { .init(rawValue: $0) }

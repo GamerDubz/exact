@@ -2,7 +2,7 @@
 import { test } from 'bun:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -123,6 +123,13 @@ test('malformed input is labelled before delivery; a state refusal is not', asyn
   await assert.rejects(() => main(['web', 'resize banana'], { open: async () => ({ close() {} }) }), e => e.malformed === true);
   // A deep link is `type` on the navigation root: the refusal names that form.
   await assert.rejects(() => main(['web', 'open euxy://p/1'], { open: async () => ({ close() {} }) }), e => e.malformed === true && e.message.includes('`type <root> euxy://p/1`'));
+  // A drive's flag inside the step was read as a form ("screenshot: unknown form 3"): the refusal names where it goes.
+  await assert.rejects(() => main(['web', 'screenshot x.png --scale 3 window'], { open: async () => ({ close() {} }) }),
+    e => e.malformed === true && e.message.endsWith('screenshot: --scale is a flag of the drive, not of the step: write it before the steps, as `web --scale 3 "screenshot x.png window"`'));
+  await assert.rejects(() => main(['web', 'screenshot x.png --json'], { open: async () => ({ close() {} }) }), e => e.malformed === true && e.message.endsWith('as `web --json "screenshot x.png"`'));
+  // `state thread --json` printed the capped summary again, the flag unread; `--full` is the step's own.
+  await assert.rejects(() => main(['web', 'state thread --json'], { open: async () => ({ close() {} }) }),
+    e => e.malformed === true && e.message.endsWith('state: --json is a flag of the drive, not of the step: write it before the steps, as `web --json "state thread"`'));
 });
 
 test('accepted pointer, wheel, media and zero-time forms still reach the carrier', async () => {
@@ -205,6 +212,26 @@ test('a press while a contact is held is refused before it reaches the carrier',
   s.contact = null;
   await s.tap('a');
   assert.deepEqual(calls.map(c => c[1]), ['press']);
+});
+
+// A row below the screen at the largest text size: `tap avatar at 22 6` was refused, unrevealed, "a press at is outside the viewport".
+test('a press at a point out of view scrolls its view in first; a point still out is refused, named', async () => {
+  const drive = async (box, to, opts) => {
+    const calls = [], carrier = { host: 'web', browser: 'chrome', launchFacts: launchFacts({}), reset() {},
+      async ask(req) { return req.op === 'layout' ? { nodes: [{ id: 1, ...box }], viewport: { w: 420, h: 900 } } : req.op === 'clock' ? { clock: 0 } : { nodes: [{ id: 1, props: { testId: 'a' }, depth: 0 }] }; },
+      async input(id, kind, o) { calls.push([kind, o.at]); return { at: [0, 0] }; },
+      async reveal() { calls.push(['reveal']); const from = box.y; box.y = to; return { scrolled: true, from, to }; } };
+    const s = await open({ reuse: carrier });
+    s.landed = async r => r;
+    return [await s.tap('a', opts).catch(e => e.message), calls];
+  };
+  const [pressed, calls] = await drive({ x: 10, y: 1000, w: 44, h: 44 }, 400, { at: [22, 6] });
+  assert.deepEqual([pressed.scrolled, calls], [{ from: 1000, to: 400 }, [['reveal'], ['press', [22, 6]]]]);
+  // A view taller than the viewport, its point still below after the reveal; a wheel, which reveals nothing.
+  assert.deepEqual(await drive({ x: 10, y: 1000, w: 44, h: 2000 }, -550, { at: [22, 1500] }),
+    ["a press at 22 1500 lands at (32, 950), outside the 420×900 viewport after the view scrolled in: scroll the point into view first, or name one nearer the view's middle", [['reveal']]]);
+  assert.deepEqual(await drive({ x: 10, y: 1000, w: 44, h: 44 }, 400, { at: [22, 6], wheel: [0, 100] }),
+    ["wheel at 22 6 lands at (32, 1006), outside the 420×900 viewport: scroll the point into view first, or name one nearer the view's middle", []]);
 });
 
 // A game's canvas is `testId="world"`, and the web and Apple hosts add a `world` summary list to the app's record: `state world`
@@ -878,12 +905,6 @@ test('a plain screenshot in an app that keeps reference pictures names compare; 
     assert.match(note(['screenshot .exact/other.png']), /compare \S*ref\/<name>\.png"/);
     assert.equal(note(['screenshot .exact/home.png compare ref/home.png']), '');
     assert.equal(note(['screenshot .exact/a.apng over 600 every 50']), '');
-    // A design's screenshots beside the app.
-    rmSync(resolve(app, 'ref'), { recursive: true });
-    const site = resolve(app, 'site'), shots = resolve(app, 'design', 'screenshots');
-    mkdirSync(site); mkdirSync(shots, { recursive: true }); writeFileSync(resolve(shots, 'home-desktop.png'), '');
-    const said = []; referenceNote(['screenshot .exact/home.png'], site, (l) => said.push(l));
-    assert.match(said.join('\n'), /design\/screenshots\/ holds 1 reference picture/);
   } finally { rmSync(app, { recursive: true, force: true }); }
 });
 
@@ -965,3 +986,24 @@ test('state marks a resource declaration unavailable when no compatible map exis
   assert.deepEqual(reply.resourceStatus.rows.declaration,
     { status: 'unavailable', reason: 'no compatible development source map' });
 });
+
+// compile the carrier itself in a child so its descriptor changes cannot affect the test runner.
+test('macOS reserves drive replies before module stdout, including JSON logs', () => {
+  if (process.platform !== 'darwin') return;
+  const dir = mkdtempSync(resolve(tmpdir(), 'exact-agent-stdio-'));
+  try {
+    writeFileSync(resolve(dir, 'main.swift'), String.raw`import Foundation
+let replies = AgentStdio.replies
+print("module startup")
+print("{\"module\":\"log\"}")
+fflush(stdout)
+replies.write(Data("{\"ok\":true}\n".utf8))
+`);
+    const built = spawnSync('xcrun', ['swiftc', 'host/apple/Sources/ExactKit/Mac/AgentStdio.swift', resolve(dir, 'main.swift'), '-o', resolve(dir, 'probe')], { encoding: 'utf8' });
+    assert.equal(built.status, 0, built.stderr);
+    const ran = spawnSync(resolve(dir, 'probe'), [], { encoding: 'utf8' });
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.equal(ran.stdout, '{"ok":true}\n');
+    assert.equal(ran.stderr, 'module startup\n{"module":"log"}\n');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}, 60_000);

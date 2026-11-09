@@ -121,6 +121,7 @@ impl<D: DataSource> Runner<D> {
             reasks,
             module_again: None,
             effects: false,
+            replay_unsafe: false,
         });
         self.said_reask(i, why, after, reasks);
     }
@@ -176,6 +177,9 @@ impl<D: DataSource> Runner<D> {
         else {
             return false;
         };
+        if self.pending[pos].replay_unsafe {
+            return false;
+        }
         let reasks = self.pending[pos].reasks;
         let Some(after) = reask_after(reasks) else {
             return false;

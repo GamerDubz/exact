@@ -288,10 +288,7 @@ pub fn route(id: &str, provider: &str, src: &Sources<'_>) -> Result<Route, Strin
                 id.trim_start_matches("openrouter:"),
             );
             e.headers = vec![
-                (
-                    "HTTP-Referer",
-                    "https://github.com/expo/exact-release".into(),
-                ),
+                ("HTTP-Referer", "https://github.com/expo/exact".into()),
                 ("X-Title", "Exact harness".into()),
             ];
             e.extra = serde_json::json!({"usage": {"include": true}});

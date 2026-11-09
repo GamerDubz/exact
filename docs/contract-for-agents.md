@@ -1361,7 +1361,10 @@ processes".
 For an attachment of any type, use `input type="file"` with no `accept` (or
 `accept="*/*"`) and `multiple` when needed. `showPicker("attach")` opens the
 input with `id="attach"`; `change` receives `Picked[]` with copies under
-`app:/tmp/picked/`. A specific `accept` list remains bounded to image/video
+`app:/tmp/picked/`. A copy's file name is not the file's: `path` is
+`app:/tmp/picked/<id>.<ext>`, `<id>` from the launch and a counter, and `name` is the
+original name. Read the bytes at `path` (grant `fs.read app:/tmp/picked`), and show or
+upload them under `name`. A specific `accept` list remains bounded to image/video
 types and the app's `file_handlers`. On Linux the agent can answer a held
 picker, but the live picker is unavailable.
 
@@ -1866,8 +1869,9 @@ a 5xx, 408 or 429, an empty body) is asked again while the picture is on screen,
 and never sooner than `Retry-After`, so its `error` comes once those are spent (about a minute of
 waits, plus the downloads and any `Retry-After`), and one that fails off screen errs only after it has shown. A symbol fires neither. What each host's fetch of an `http(s)` source
 sends, follows and accepts is this: macOS and iOS send no cookie and no
-`Referer`, follow redirects to any host (within App Transport Security), take any
-2xx body up to 64 MiB whatever its `Content-Type`, and keep an HTTP cache on disk;
+`Referer`, follow redirects to any host (within App Transport Security), take a
+body up to 64 MiB whatever its `Content-Type` and its status, as a browser's `<img>` does
+(a 404 that is an image draws; one that is not is `HTTP 404`), and keep an HTTP cache on disk;
 the web is the browser's `<img>` (its cookies and `Referer` rules, no size cap). SVG
 draws on the web only; on Apple it is an `error`. A tinted remote image on the web
 needs CORS headers, or it is an `error` too. A drive sees both after `clock +<ms>
@@ -2782,6 +2786,47 @@ painted popover anchored to the node instead. The node's own `contextmenu` actio
 serve every row of a list. A node inside an open popover opens its menu over
 that popover, which stays open, as HTML nests them. The agent opens it with `tap <node> contextmenu`.
 
+#### Swipe to reply
+
+`swiperight` moves its node with the finger: it follows up to 64 points, then a fifth of
+the finger's travel, and the action runs if the node is at or past 64 points when the
+finger lifts. A finger reaches it only with `touch-action="pan-y"`, which leaves vertical
+drags to the list. A `transition` on `translate` springs the node back after the lift;
+without one it jumps back. The node's first child with `swipeIndicator=true` goes from its
+own `opacity` and `scale` to 1 as the swipe reaches 64 points, and back by its own
+`transition` after the lift. Give the node `position="relative"`, so an absolute indicator
+is placed against the node and not against the row around it. `symbol:reply` is a speech
+bubble (SF Symbols' `bubble.left`); Messages' left-turning arrow, `arrowshape.turn.up.left`,
+has no named symbol, so an app declares it as an icon token. The iOS host plays a selection
+haptic as the swipe crosses 64 points, so the action plays none. `apps/messages`' bubble
+is a whole example.
+
+```contract
+component Thread
+  state replyTo = ""
+  action reply(id: string)
+    replyTo = id
+  view
+    column align-items="flex-start" padding=12 gap=8
+      box position="relative" swiperight=reply("1") touch-action="pan-y"
+        transition="translate -exact-spring(300, 30, 1)" testId="bubble-1"
+        image "symbol:reply" swipeIndicator=true position="absolute" left=-32 top=8 opacity=0 scale=0.5
+          transition="opacity -exact-spring(300, 30, 1), scale -exact-spring(300, 30, 1)" aria-hidden=true
+        text "Lunch tomorrow?" padding="8px 12px" border-radius=18 background-color="-exact-fill"
+      if replyTo != ""
+        text "Replying to “Lunch tomorrow?”" testId="reply-bar"
+```
+
+```contract-test
+test "a swipe right answers the message"
+  tap "bubble-1" drag 100 0 from 10 10
+  clock settle
+  expect tree has "reply-bar"
+```
+
+A test's drag is a real touch on an iOS simulator: start it where 100 points stay on the
+screen, and `clock settle` after it, so the spring back has ended when the screen is read.
+
 #### A confirmation
 
 "Remove book?" with a message, Cancel and a destructive Remove (React Native's
@@ -3074,7 +3119,11 @@ fact, not a CSS media feature, read wherever Exact draws with UIKit's metrics (i
 iPadOS, tvOS, visionOS, watchOS), and false on the Mac, Android, Linux, Windows and
 the web.
 `EmptyState` drops its symbol then. Under the agent on iOS, `prefer root-font-size
-28` (Dynamic Type's AX1 body) or more sets it.
+28` (Dynamic Type's AX1 body) or more sets it. That `prefer` sets only the size of the
+text Exact draws: UIKit's own text, a native field's among them, keeps the simulator's
+text size. To see a screen at the largest size, as `verify` does, set the simulator's:
+`xcrun simctl ui <udid> content_size accessibility-extra-extra-extra-large`. With no
+size, `content_size` prints the current one: set it back after.
 `exactViewport().gpuTier` is `low`, `mid` or `high`: how much GPU work a frame can
 afford, chosen once before the GPU device is made from what the adapter reports
 (a phone GPU of the Adreno 600 class is `low`), else from the screen (a phone-sized
@@ -3519,6 +3568,8 @@ the accepted generation it describes. The driver can connect layout to the
 original declaration, component call sites, and winning style attribute.
 Production artifacts do not need a development source map.
 
+### The driver's operations
+
 The driver has ten operations: `tree`, `screenshot`, `tap`, `type`, `state`,
 `layout`, `logs`, `clock`, `prefer`, and `perf`. Variations are arguments, not new
 commands; `prefer` takes CSS's media feature names (`"prefer prefers-color-scheme dark"`,
@@ -3695,7 +3746,12 @@ A playing `video` or `audio` is on real time too: the clock never seeks or holds
 between operations it moves only as far as the drive took. `clock +N real` lets
 N ms of real time pass with the clock moving beside it, a step at a time: a
 video plays that far (its `timeupdate`s arrive), and a reply that lands in the
-span lands.
+span lands. On Apple's hosts `state media` reads each video's
+player: its `renderer`, `paused`, `currentTime`, `muted` and `volume`. Under the
+agent a video never takes the audio session, so the app's `audio_session` is not
+applied and a drive cannot show that it is heard (AVKit's speaker shows a slash).
+On iOS, AVKit's own controls (`controls=true`) show only for a real touch: tap the
+video under `--touch platform`.
 `clock +N real until <path>` is a test harness's affordance, not something an app
 drive needs: the same real time with the clock beside it, ended early once the
 file at `<path>` (a local path, not a URL or a glob; its directory must exist)

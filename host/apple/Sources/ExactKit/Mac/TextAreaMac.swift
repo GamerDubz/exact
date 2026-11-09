@@ -86,7 +86,8 @@ package final class TextArea: NSTextView {
     package override func mouseDown(with event: NSEvent) {
         guard let owner else { return super.mouseDown(with: event) }
         if owner.pressesUntracked(self, event) { return }
-        owner.tracksPointer(event) { super.mouseDown(with: event) }
+        guard let fields = owner.presenter?.fieldSelections else { return owner.tracksPointer(event) { super.mouseDown(with: event) } }
+        fields.pressing(owner, event) { owner.tracksPointer(event) { super.mouseDown(with: event) } }
     }
     // The agent's window is never key: its every click counts, as at a node (`NodeView.everyClickCounts`).
     package override func acceptsFirstMouse(for event: NSEvent?) -> Bool { NodeView.everyClickCounts || super.acceptsFirstMouse(for: event) }
@@ -446,7 +447,13 @@ extension NodeView {
     /// different one is held while text is marked, the last one written,
     /// and applied when the composition ends (`applyHeldValue`,
     /// `FieldComposition.swift`). The write is not typing, so the app does
-    /// not hear it as `input`.
+    /// not hear it as `input`, and a person using VoiceOver hears none of it
+    /// in a focused textarea, as in a browser's: AppKit posts
+    /// a selection change for it, and VoiceOver, inferring an edit from
+    /// that or from any value change posted, reads the text that went or
+    /// spells what came as typing. AppKit posts nothing for a view that is
+    /// no accessibility element, so the text view is none while the write
+    /// lands.
     func writeValue(_ value: String, into f: NSTextView) {
         if f.string.utf16.elementsEqual(value.utf16) { pendingValue = nil; return }
         if f.hasMarkedText() { pendingValue = value; return }
@@ -459,12 +466,15 @@ extension NodeView {
         f.breakUndoCoalescing()
         f.undoManager?.removeAllActions()
         let selection = f.selectedRange()
+        let quiet = f is TextArea && f.window?.firstResponder === f && f.isAccessibilityElement()
+        if quiet { f.setAccessibilityElement(false) }
         if let storage = f.textStorage, storage.length > 0, edit.range.length < storage.length {
             storage.replaceCharacters(in: edit.range, with: NSAttributedString(string: edit.text, attributes: f.typingAttributes))
         } else {
             f.string = value
         }
         f.setSelectedRange(carrySelection(selection, through: edit))
+        if quiet { f.setAccessibilityElement(true) }
         (f as? TextArea)?.markup?.bookmark = f.selectedRange()
         restyleMarkup()
     }
@@ -587,10 +597,12 @@ extension NodeView {
     }
     package func textDidEndEditing(_ notification: Notification) {
         presenter?.collections.pinsChanged()
-        showFieldFocus(false)
-        textAreaScroll?.noteFocusRingMaskChanged()
-        presenter?.commitEdit(id, textArea?.string ?? "", change: handlers.contains("change"))
-        presenter?.blur(id)
+        leavingFocus {
+            showFieldFocus(false)
+            textAreaScroll?.noteFocusRingMaskChanged()
+            presenter?.commitEdit(id, textArea?.string ?? "", change: handlers.contains("change"))
+            presenter?.blur(id)
+        }
     }
 }
 
@@ -835,7 +847,8 @@ private func drawBareFieldMask(_ field: NSTextField) -> Bool {
 private func pressingField(_ owner: Any?, _ event: NSEvent, _ editor: NSView, _ track: () -> Void) {
     guard let node = owner as? NodeView else { return track() }
     if node.pressesUntracked(editor, event) { return }
-    node.tracksPointer(event, track)
+    guard let fields = node.presenter?.fieldSelections else { return node.tracksPointer(event, track) }
+    fields.pressing(node, event) { node.tracksPointer(event, track) }
 }
 /// The field editor selects the whole value as it takes a field, which is
 /// no `select` of the person's; a selection a script set while the field

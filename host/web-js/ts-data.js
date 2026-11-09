@@ -5,10 +5,12 @@
 // keeps keys as the web host does (the pair itself in
 // IndexedDB under a handle the store holds; its code is fetched on first
 // use); `openAuthSession` is auth.js.
+// The runtime's bindings load before the app's module and what it imports, so ts-fetch.js takes the page's own
+// functions before any app code runs.
+import { activeCall, answering, dropTimers, files as bodyFiles, SOCKET_AND_FETCH } from './ts-fetch.js';
 import * as source from '__APP_TS__';
 import { createSecretFacade, hasGrant, inOverlay, overlaying, setAppGrantSet } from './admission.js';
 import { tsGrantSet } from './admission-data.js';
-import { answering, dropTimers, files as bodyFiles, SOCKET_AND_FETCH } from './ts-fetch.js';
 import { sourceTypes } from './names.js';
 import { checkpoint, clock, commit, drive, inflight, journal, Origin, painted, R, Resources } from './rt.js';
 import { Shaped } from './shape.js';
@@ -149,11 +151,13 @@ const moduleWatched = new Map(); // module key -> sources
 // Whether the answer that made the call still wants its reply is its call's `wanted`, its ticket's `held` (rt.js
 // `reply`), which a registration's reply reads.
 globalThis.__exact_module = body => {
-  const key = `${body.extension}.${body.source}`, call = answering.call;
+  const key = `${body.extension}.${body.source}`, call = activeCall(), before = answering.call;
   if (body.source && watching) (moduleWatched.get(key) ?? moduleWatched.set(key, new Set()).get(key)).add(watching);
-  // A tool handler's call carries its origin (`data.tool`); every other is the app's.
+  // A continuation keeps the least privileged pending call until its answer settles.
   const origin = call?.origin ?? 'app';
-  return ordinary(() => globalThis.exact?.extensions?.call?.({ ...body, origin }, () => call?.wanted?.() ?? true) ?? Promise.resolve({ error: 'NotSupportedError' }));
+  answering.call = call;
+  try { return ordinary(() => globalThis.exact?.extensions?.call?.({ ...body, origin }, () => call?.wanted?.() ?? true) ?? Promise.resolve({ error: 'NotSupportedError' })); }
+  finally { answering.call = before; }
 };
 (globalThis.exact ??= {}).announceModule = topic => announce(topic, 'module');
 globalThis.exact.moduleReaders = key => Resources.filter(r => moduleWatched.get(key)?.has(r.source)).map(r => r.name);
@@ -417,7 +421,7 @@ export function install(data, mixed = false, modules = null) {
   };
   const answerWith = (name, args, target, mutation, types, params, result, seen) => {
     // A kept key's work is counted on its answer as an ordinary fetch is.
-    for (const name of ['key', 'keepKey']) { const op = seen[name]; seen[name] = (...a) => ordinary(() => op(...a)); }
+    for (const name of ['key', 'keepKey', 'exclusive']) { const op = seen[name]; seen[name] = (...a) => ordinary(() => op(...a)); }
     asking = target ?? name; watching = name;
     for (const sources of moduleWatched.values()) sources.delete(name);
     // The origin of the commit that asked it, which a fetch it makes carries.
@@ -479,12 +483,15 @@ export function install(data, mixed = false, modules = null) {
   data.tool = (name, args, store, origin) => {
     const handler = source.tools?.[name];
     if (typeof handler !== 'function') return null;
-    const call = answering.call = { stream: null, mutation: true, name, turn: true, origin };
+    const before = answering.call, call = answering.call = { stream: null, mutation: true, name, turn: true, origin };
+    if (origin !== 'app') answering.untraced.add(call);
+    const settle = () => { call.settled = true; dropTimers(call); answering.untraced.delete(call); };
     asking = name;
     let r;
     try { r = handler(args, createSecretFacade(store, tsGrantSet, kept), storage); }
-    finally { call.turn = false; asking = ''; answering.call = null; }
-    return Promise.resolve(r).finally(() => { call.settled = true; dropTimers(call); });
+    catch (error) { settle(); throw error; }
+    finally { call.turn = false; asking = ''; answering.call = before; }
+    return Promise.resolve(r).finally(settle);
   };
   // A resource's source that sent and then threw: what it sent, which rt.js `ask` queues with the commit.
   data.thrown = () => { const t = thrown ?? []; thrown = null; return t; };

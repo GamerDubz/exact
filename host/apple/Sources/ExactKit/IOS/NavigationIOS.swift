@@ -987,6 +987,10 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
     /// pressed), `cancelled` (an interactive pop returned), `idle` (a
     /// programmatic change, or nothing yet) — for `state.navigation`.
     private var lastTransition = "idle"
+    /// The route a running pop has decided to take, until the pop ends (`noteZoomPop`).
+    weak var decidedPop: RouteController?
+    /// The app followed the running pop before it ended (`followDecidedPop`).
+    private var followedPop = false
     /// Whether UIKit is pushing or popping the stack navigation follows: from
     /// the transition's first frame through `didShow`, until the completion
     /// `willShow` registers
@@ -1065,6 +1069,16 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
             session.hostBack(key)
         case nil: break
         }
+    }
+
+    /// The app follows the pop UIKit has decided on but not finished: Back from its source, unless
+    /// the app has already left it. `completeTransition` then adds no Back of its own.
+    /// A route with a search field waits for `transitionEnded`, which finishes it while its handlers exist.
+    func followDecidedPop() {
+        guard let source = decidedPop, source.key == selectedKey, source.search == nil, !presenter.modals.inTransition,
+              presenter.views[source.node.id] === source.node else { return }
+        followedPop = true
+        goBack()
     }
 
     /// A history jump uses navigation; the authored Back control handles the adjacent intent.
@@ -1236,6 +1250,9 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
         let swipe: Swipe? = transition.initiallyInteractive
             ? (transition.viewController(forKey: .from) as? RouteController).map { ($0.node, $0.key, navigationController.viewControllers.count + 1) }
             : nil
+        #if os(iOS)
+        noteZoomPop(transition, on: navigationController)
+        #endif
         transition.animate(alongsideTransition: nil) { [weak self, weak navigationController] context in
             guard let self, let navigationController else { return }
             transitionEnded(navigationController, swipe: swipe, cancelled: context.isCancelled)
@@ -1255,6 +1272,9 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
     private func revealTick() {
         guard changing else { stopRevealing(); return }
         presenter.paintVisibleText()
+        #if os(iOS)
+        if decidedPop != nil, let navigation { settleLargeTitle(navigation) }
+        #endif
     }
 
     private func stopRevealing() {
@@ -1297,6 +1317,11 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
 
     private func completeTransition(_ navigationController: UINavigationController,
                                     swipe: Swipe?, cancelled: Bool) {
+        // A pop the app followed is owed nothing: its source is gone by now, and a push since
+        // leaves the stack as deep as the swipe found it, which reads as a source replaced.
+        let followed = followedPop
+        followedPop = false
+        decidedPop = nil
         // Identify the visit UIKit removed before recording its shorter stack
         let departed = stacks[ObjectIdentifier(navigationController)]?.written.last.flatMap { id in
             controllers.values.first { ObjectIdentifier($0) == id && !navigationController.viewControllers.contains($0) }
@@ -1332,7 +1357,13 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
             // arrival no projection has handled yet reconciles the bar with
             // its tablist.
             DispatchQueue.main.async { [weak self, weak navigationController] in
-                if let navigationController { self?.settleTablist(navigationController) }
+                if let navigationController {
+                    self?.settleTablist(navigationController)
+                    #if os(iOS)
+                    if swipe != nil { self?.settleLargeTitle(navigationController) }
+                    #endif
+                }
+                self?.presenter.menus.resumeAfterRouteDismissal()
             }
             // At rest: a large title's insets are sampled now.
             coversChanged()
@@ -1355,11 +1386,11 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
         let behindUIKit = !presenter.modals.inTransition
             && NavigationRules.appIsBehind(poppedKeys: poppedKeys, uikitTop: uikitTop, shownKeys: shownKeys, rootKey: rootKey)
         // A cancelled pop performed no Back, whatever the app did to its source meanwhile
-        let dispatches = !cancelled && (sourceRule || behindUIKit)
+        let dispatches = !cancelled && !followed && (sourceRule || behindUIKit)
         if dispatches, !sourceRule {
             presenter.session?.log("navigation: UIKit popped to \(uikitTop); the app's stack follows it from \(rootKey)")
         }
-        lastTransition = dispatches ? "completed" : (cancelled ? "cancelled" : "idle")
+        lastTransition = dispatches || followed ? "completed" : (cancelled ? "cancelled" : "idle")
         guard dispatches else { return }
         if swipe == nil, let destination = (viewController as? RouteController)?.key,
            let from = shownKeys.firstIndex(of: rootKey),

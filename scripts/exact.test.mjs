@@ -541,6 +541,11 @@ test.skipIf(!tools)('an executable whose name ends in parentheses is read as a f
   assert.ok(existsSync(resolve(dir, 'Demo (Beta).dSYM/Contents/Resources/DWARF/Demo (Beta)')), 'dsymutil wrote the dSYM');
   assert.ok(saved > 0, 'strip took symbols off');
   assertLinkedSdk(executable, '15.0');
+  // A binary whose bytes must not change (an archive's GPU framework) gets its dSYM alone.
+  const bytes = readFileSync(executable);
+  assert.equal(stripForDistribution(executable, resolve(dir, 'Kept.dSYM'), { strip: false }).saved, 0);
+  assert.ok(existsSync(resolve(dir, 'Kept.dSYM/Contents/Resources/DWARF/Demo (Beta)')), 'dsymutil wrote the dSYM');
+  assert.ok(readFileSync(executable).equals(bytes), 'the binary is unchanged');
 }));
 
 // `exact hatch` writes a stub a target, wires it into a module it wrote, and declares the word.
@@ -971,7 +976,7 @@ test('docs prints the section on its words first, matching whole words', () => {
     [['glass'], 'docs/contract-for-agents.md', /glass/],
     [['detent'], 'docs/contract-for-agents.md', /detent/],
     [['tab', 'bar'], 'docs/recipes/tabs.md', /tab bar/],
-    [['back', 'button'], 'docs/recipes/navigation-stack.md', /UIKit's Back/],
+    [['back', 'button'], 'docs/recipes/navigation-stack.md', /`button id="back"`/],
     [['search'], 'docs/recipes/list-rows.md', /search/],
     [['menu'], 'docs/recipes/list-rows.md', /menu/],
     [['swipe'], 'docs/recipes/list-rows.md', /swipe/],

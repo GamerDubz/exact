@@ -361,8 +361,42 @@ This list holds what the [agent guide](contract-for-agents.md)'s rules don't mak
   `Intl.NumberFormat` made at module load, keep what only a detail screen shows (its
   chart) out of the per-tick answer, and limit each tick's work to the rows that
   moved.
+- **Scrolled up, a chat's messages showed through the composer under it.** Cause: a
+  virtualized `list` draws its rows past its bottom edge, under the views that follow
+  it, and a composer row with no background shows them; `check` reports each such text
+  as overlapping the composer. `overflow="hidden"` on the list is refused
+  (`lower-collection-flow`). Fix: give the bar after the list a background
+  (`background-color="-exact-background"`, which leaves the screen at rest as it was) or
+  a material (`backgroundMaterial="ultra-thin"`, as `apps/messages`'s composer bar has).
 
 ## Native presentation and navigation (iOS)
+
+- **Two inputs sharing a flex row widen the page's scroll extent on iOS.** A `row` of two
+  `input`s with `flex=2` and `flex=1` (`min-width=0`) lays out at their shares of the row, yet the
+  route's `scroll` reports a horizontal extent (`layout`: `scroll 0,0 of 71.67,…`) and the screen
+  pans sideways: the extent counts the fields' intrinsic widths, not their frames. `flex="2 1 0"`,
+  `width=0` and a grid do not change it. Fix: `overflow="hidden"` on each input
+  (`issues/20261103-ios-row-of-inputs-widens-scroll-extent.md`). One field on its own row and the
+  web are unaffected.
+- **Nothing in Contract pinches: a zoomable photo is a native view.** No tag zooms under two
+  fingers (`scroll` never does; `transform` is a static scale), so a lightbox's photo is the app's
+  module tag (`modules/apple`: a `UIScrollView` with `maximumZoomScale`; `modules/android`: a `View`
+  drawing its bitmap through a `Matrix` under `ScaleGestureDetector`; `modules/web`: pointer events
+  and `wheel` on an element in the shadow root). Present it on a route with
+  `navigationPresentation="fullscreen"`: a full-screen cover on iOS (`ModalIOS.swift`; with
+  `navigationSource` naming the photo beneath, iOS 18 zooms it out) and a dialog in a browser, where
+  an overlay `position="absolute" inset=0` at the root would span the whole scrolling document
+  (`position` has no `fixed`). The driver's `tap <id> pinch <scale>` reaches only a canvas's photo
+  binding, not a native view: a module's pinch is checked in Chrome through pointer events.
+
+- **A pushed route never flies by `sharedElement`: the card stays mounted beneath.** A
+  name pairs only when one commit destroys its holder and creates another
+  (`kernel/src/handoff.rs`); a push keeps the screen beneath in the stack, so the card is
+  never destroyed and the product's photo lands without a flight. The platform's way is the
+  zoom: `navigationSource=` on the pushed route's `navigationKey` column, naming the `id`
+  on the card's `image` and on the route's own (`ZoomPushIOS.swift`, iOS 18 and later). The
+  agent's filmed screenshots skip UIKit's push and zoom: record the simulator
+  (`xcrun simctl io booted recordVideo`) and read its frames.
 
 - **A cold launch flashes the wrong colour, and no screenshot shows it.** The launch
   screen is `host.ios.launchImage` centred on `background_color` (`background_color_dark`
@@ -1075,8 +1109,10 @@ price: answers arrive `Later`, outside the action's transaction.
   does nothing. Cause: with `touch-action` at `auto` a horizontal pan is the
   platform's, as in a browser, so the swipe never begins. Fix:
   `touch-action="pan-y"` on the swiped node, which leaves vertical scrolling to the
-  page. Messages also gives the bubble `transition="translate -exact-spring(300, 30, 1)"`,
-  which moves it with the finger; that does not arm the gesture. **Candidate
+  page. The bubble follows the finger with or without a `transition`; the one
+  Messages gives it, `transition="translate -exact-spring(300, 30, 1)"`, springs it
+  back after the lift and does not arm the gesture
+  ([Swipe to reply](contract-for-agents.md#swipe-to-reply)). **Candidate
   diagnostic:** the compiler could
   warn on a `swiperight` without `touch-action`, as on a `pan`.
 
@@ -1629,6 +1665,15 @@ price: answers arrive `Later`, outside the action's transaction.
 
 ## Websites
 
+- **A photo that should fly between two pages stays put while the page beneath is
+  mounted.** On the web as natively, a `sharedElement` name pairs only when the leaver is
+  destroyed and the arriver created in one commit. A site that keeps every stack entry's
+  content (`for e in t.stack`) destroys nothing on a push. Keep each route's `navigationKey`
+  column mounted (the host's Back needs the route beneath) and put its content under
+  `if inApp or e.id == top(nav).id`: in a browser the card leaves as the product arrives, and
+  `shared.js` runs a view transition. A Back or Forward lands at once, without the flight
+  (`issues/20261103-web-history-traversal-forgoes-shared-element-flight.md`).
+
 - **`pages=` on a `render=build` route renders no pages in an app without a Rust render
   entry.** A route `product "/product/:id" render=build pages=productPages()` compiles, and
   `web-build --out dist` writes `/`, `/about` and `404.html` with no word about the product
@@ -1647,6 +1692,21 @@ price: answers arrive `Later`, outside the action's transaction.
   (`.at(-1)`), or `replace` when the top is that route and the URL is its own:
   `nav = top(nav).name == "shop" and (url == "/" or url.slice(0, 2) == "/?") ? replace(nav, url) : go(nav, url)`,
   so Back leaves the shop rather than stepping through each filter.
+
+- **A page rendered at build keeps the build's viewport reading in the browser.** Symptom: a
+  `render=build` page whose chrome follows `exactViewport().width` (a tab bar under 700 px, a
+  site header above) shows the phone chrome in a 1280 px desktop window, before and after the
+  script runs; a `render=client` page in the same site reads 1280. Cause: the JS target renders
+  the page at the bake's viewport (390 × 844, `runner/src/viewport.rs` `Viewport::default`) and
+  the runtime keeps that answer at boot; only a `resize` event re-reads `innerWidth`
+  (`host/web-js/facts.js`). The agent's `--size` and a test's `size` launch line do not change
+  it either, so `state viewport` reads 390 on such a page until `resize` (an interactive op;
+  tests have none). Verified in Chrome through Playwright and under `agent web`. What to do:
+  decide nothing structural by the viewport on a page rendered at build: let CSS fit the width
+  (`flex-wrap`, a grid's `minmax`), and choose the app's chrome against the website's by a fact
+  that is the same at build and at launch, such as a data-module source that answers whether
+  it runs under Hermes. **Candidate diagnostic:** warn on an `if` or `display=` that reads
+  `exactViewport().width` in a `render=build` route.
 
 ## Working on exact2 itself
 

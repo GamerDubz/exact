@@ -142,6 +142,7 @@ pub(crate) unsafe extern "C" fn host_door(
                     // The bake links no module. The prelude throws storage's
                     // `code: 'bake'` refusal for it.
                     _ if state.baking => Err("bake".into()),
+                    _ if state.between_answers => Err(no_store("native.call")),
                     _ => Err(
                         "native storage is unavailable during bake or in an unconfigured host"
                             .into(),
@@ -255,6 +256,11 @@ pub(crate) unsafe extern "C" fn host_door(
             }
             Err(_) => Err("abort: a ticket that is not a number".into()),
         },
+        24 | 26 if state.baking || state.validating || state.readonly_secrets => Err(
+            "shared secrets are unavailable during bake, validation, or a read-only snapshot"
+                .into(),
+        ),
+        24..=26 => state.secrets.door(op, &a, &b, state.store.map(|s| &mut *s)),
         other => Err(format!("__exact_host: no op {other}")),
     };
     *out = std::ptr::null_mut();

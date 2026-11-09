@@ -164,6 +164,14 @@ test('a new outside app passes the checks every run makes, and a drifted one is 
     assert.ok(authoredApp(dir));
     assert.deepEqual(outsideWorkspaceProblems(dir), []);
     assert.deepEqual(readFileSync(resolve(dir, '.cargo/config.toml')), readFileSync(resolve(import.meta.dir, '../.cargo/config.toml')));
+    // Patches through a symlink to this checkout (one an app checkout at another depth reaches it by) name the same crates.
+    const linked = resolve(parent, 'exact2-link'), direct = readFileSync(resolve(dir, 'Cargo.toml'), 'utf8');
+    symlinkSync(resolve(import.meta.dir, '..'), linked);
+    const throughLink = direct.replaceAll(`"${pathFrom(dir, resolve(import.meta.dir, '..'))}/vendor/`, `"${linked}/vendor/`);
+    assert.notEqual(throughLink, direct);
+    writeFileSync(resolve(dir, 'Cargo.toml'), throughLink);
+    assert.deepEqual(outsideWorkspaceProblems(dir), []);
+    writeFileSync(resolve(dir, 'Cargo.toml'), direct);
     const manifest = readFileSync(resolve(dir, 'Cargo.toml'), 'utf8');
     writeFileSync(resolve(dir, 'Cargo.toml'), manifest.replace(/^taffy = .*\n/m, ''));
     writeFileSync(resolve(dir, 'rust-toolchain.toml'), '[toolchain]\nchannel = "1.0.0"\n');
@@ -187,7 +195,11 @@ test('a new outside app passes the checks every run makes, and a drifted one is 
     const appTest = resolve(dir, 'app.test.contract');
     assert.match(readFileSync(appTest, 'utf8'), /the greeting loads/, 'update preserves existing tests');
     rmSync(appTest);
+    // An app that keeps its diary in git ignores the rest of .exact/; a `/.exact/` line after its exception would undo it.
+    const diaryKept = '/target/\n/.exact/*\n!/.exact/diary/\n/.env.local\n';
+    writeFileSync(resolve(dir, '.gitignore'), diaryKept);
     assert.doesNotMatch(createApp(dir, { update: true }), /AGENTS|gitignore/, 'current instructions are left as they are');
+    assert.equal(readFileSync(resolve(dir, '.gitignore'), 'utf8'), diaryKept);
     assert.match(readFileSync(appTest, 'utf8'), /test "the app opens"\n$/);
     assert.ok(!readFileSync(appTest, 'utf8').includes('greeting'), 'an older app need not have the scaffold IDs');
     assert.equal(readFileSync(resolve(dir, 'Cargo.toml'), 'utf8'), manifest, 'the patch table is rewritten in place');
@@ -490,13 +502,18 @@ test('a native verb names its platform, and the generated workspace follows app.
     assert.match(readFileSync(resolve(first.workspace, 'android/build.rs'), 'utf8'), /exact_js_bake::build_android\(std::path::Path::new\("\.\.\/\.\.\/\.\."\)\)/);
     assert.match(readFileSync(resolve(first.workspace, 'android/src/lib.rs'), 'utf8'), /exact_linux::canvas_jni!\(super::AppData, hatches = crate::android::exact_hatches\(\)\);/);
     assert.ok(!existsSync(resolve(dir, 'Cargo.toml')) && !existsSync(resolve(dir, 'linux')), 'nothing Rust in the author\'s tree');
-    // resolveApp takes the generated workspace, with the target at the app, when nothing authored one.
-    const was = process.env.EXACT_APP_DIR;
+    // resolveApp takes the generated workspace, with the target at the app, when nothing authored one (and no
+    // CARGO_TARGET_DIR names another, as a run with its own target directory does).
+    const was = process.env.EXACT_APP_DIR, target = process.env.CARGO_TARGET_DIR;
     process.env.EXACT_APP_DIR = dir;
+    delete process.env.CARGO_TARGET_DIR;
     try {
       const app = resolveApp();
       assert.deepEqual([app.generated, app.workspace, app.target, app.crate('linux'), app.cargoPackage('linux')?.name], [true, realpathSync(first.workspace), resolve(realpathSync(dir), 'target'), 'field-log-linux', 'field-log-linux']);
-    } finally { if (was === undefined) delete process.env.EXACT_APP_DIR; else process.env.EXACT_APP_DIR = was; }
+    } finally {
+      if (was === undefined) delete process.env.EXACT_APP_DIR; else process.env.EXACT_APP_DIR = was;
+      if (target !== undefined) process.env.CARGO_TARGET_DIR = target;
+    }
     // A platform dropped takes its crate with it; the last native one may go (deploy reads none as none).
     assert.match(createApp(dir, { update: true, without: 'android' }), /without android \(removed host\.android\)/);
     assert.deepEqual(ensureShells(dir).crates, ['web', 'apple']);
@@ -971,6 +988,24 @@ test('launchers and generated own commands find pinned Bun with an old PATH', ()
       const root = spawnSync(old, [resolve(import.meta.dirname, '../scripts/exact.mjs'), 'list'], {env, encoding: 'utf8'});
       assert.equal(root.status, 0, root.stderr);
     }
+  } finally {rmSync(parent, {recursive: true, force: true});}
+});
+
+test('a script moves to the pinned Bun, and a test file, whose `bun test` cannot move, names the Bun to run it with', () => {
+  const parent = realpathSync(mkdtempSync(resolve(tmpdir(), 'exact-bun-')));
+  try {
+    const pinned = resolve(parent, 'bun'), script = resolve(parent, 'script.mjs'), file = resolve(parent, 'pinned.test.mjs');
+    writeFileSync(pinned, '#!/bin/sh\nif [ "$1" = --version ]; then echo 99.0.0; else echo "pinned Bun ran $*"; fi\n', {mode: 0o755});
+    const source = `import {ensureBun} from ${JSON.stringify(resolve(import.meta.dir, '../scripts/bun.mjs'))};\nensureBun('1.0.0');\n`;
+    writeFileSync(script, source);
+    writeFileSync(file, `${source}import {test} from 'bun:test';\ntest('ran', () => {});\n`);
+    const env = {...process.env, BUN: pinned};
+    const moved = spawnSync(process.execPath, [script], {cwd: parent, env, encoding: 'utf8'});
+    assert.deepEqual([moved.status, moved.stdout], [0, `pinned Bun ran ${script}\n`]);
+    const tested = spawnSync(process.execPath, ['test', file], {cwd: parent, env, encoding: 'utf8'});
+    assert.notEqual(tested.status, 0);
+    assert.ok(tested.stderr.includes(`cannot hand \`bun test\` to this checkout's Bun; run ${pinned} test ${file}`), tested.stderr);
+    assert.ok(!tested.stdout.includes('pinned Bun ran'), tested.stdout);
   } finally {rmSync(parent, {recursive: true, force: true});}
 });
 

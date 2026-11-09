@@ -37,7 +37,9 @@
 use super::{CanvasHost, FINISHED};
 use exact_runner::agent::{error, field_str};
 use exact_runner::DataSource;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 /// A driver has asked: the host's turns run at the runner's clock.
 static DRIVEN: AtomicBool = AtomicBool::new(false);

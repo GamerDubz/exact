@@ -61,25 +61,26 @@ import { keptModules } from './modules.mjs';
 import { appleLinkArgs, embedLibrary, prepareLibrary, xcframeworkSlice } from '../../scripts/package-libraries.mjs';
 import { quiet, quietFor } from './quiet.mjs';
 import { keptCrates } from './crates.mjs';
+import { appleCargo } from '../../scripts/cargo-check.mjs';
 import { linkedPlanArgs, placeLinkedPlan } from '../../scripts/linked-plan.mjs';
 import { appleComposition, assertCapabilityFrameworks, assertLinkedSdk, linksByPlan } from './link.mjs';
 export { appIcon, iosAssets, documentTypes, exportedTypes, importedTypes };
 import { IPAD_ORIENTATIONS, orientationKeys, allows, deviceLaunchArgs, developmentLaunchEnvironment, identity, installedBuild, macIdentity, phone, replacedNote, profile, showSimulator, simulator, simulators, useXcode } from './devices.mjs';
 const root = resolve(new URL('../..', import.meta.url).pathname);
 const run = (cmd, args, opts = {}) => {
-  const r = spawnSync(cmd, args, { cwd: root, ...opts,
-    stdio: opts.stdio === 'ignore' ? ['ignore', 'ignore', 'pipe'] : opts.stdio ?? 'inherit' });
+  const r = spawnSync(...appleCargo(cmd, args, { cwd: root, ...opts,
+    stdio: opts.stdio === 'ignore' ? ['ignore', 'ignore', 'pipe'] : opts.stdio ?? 'inherit' }));
   if (r.status !== 0) throw new Error(`${cmd} failed (${r.status ?? r.error?.message})${r.stderr?.length ? ': ' + String(r.stderr).trim() : ''}`);
   return r;
 };
-const read = (cmd, args, opts = {}) => spawnSync(cmd, args, { cwd: root, encoding: 'utf8', ...opts });
+const read = (cmd, args, opts = {}) => spawnSync(...appleCargo(cmd, args, { cwd: root, encoding: 'utf8', ...opts }));
 // Every Apple toolchain invocation goes through here — cargo, swift build, and
 // the webarm swiftc alike: a mixed deployment target or an incompatible sysroot
 // is a warning the toolchain prints and then links anyway, so the build fails on
 // it here instead.
 const runApple = (cmd, args, opts = {}) => {
   const { cargoMessages = false, ...spawnOptions } = opts;
-  const r = spawnSync(cmd, args, { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, ...spawnOptions });
+  const r = spawnSync(...appleCargo(cmd, args, { cwd: root, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, ...spawnOptions }));
   if (!cargoMessages) process.stdout.write(quiet(r.stdout ?? ''));
   process.stderr.write(quiet(r.stderr ?? ''));
   if (r.status !== 0) throw new Error(`${cmd} failed (${r.status ?? r.error?.message})`);
@@ -100,7 +101,7 @@ const refuseMixedTargets = (cmd, args, output) => {
  * says its own failure. A build that ends early stops it. `authored` restores paths in the log (`snapshotSources`). */
 function startApple(cmd, args, log, { authored, ...opts } = {}) {
   const out = openSync(log, 'w');
-  const child = spawn(cmd, args, { cwd: root, ...opts, stdio: ['ignore', out, out] });
+  const child = spawn(...appleCargo(cmd, args, { cwd: root, ...opts, stdio: ['ignore', out, out] }));
   closeSync(out);
   const exited = new Promise((settle) => {
     child.once('error', (error) => settle({ status: null, error }));
@@ -534,16 +535,16 @@ export function designCompatible(app, platform) {
   return true;
 }
 
-/** A distributed executable without its local symbols — 3.6 of Caltrain's
- * 13.1 MB on the Mac — which are first written beside it as a dSYM, so a
- * crash report from the field is still symbolicated. `strip` keeps the
- * image's UUID, which is how the dSYM is matched; a relink without symbols
- * would be another UUID. Development builds keep theirs. */
-export function stripForDistribution(executable, dsym) {
+/** A distributed executable or framework without its local symbols — 3.6 of Caltrain's
+ * 13.1 MB on the Mac — which are first written beside it as a dSYM, so a crash report from
+ * the field is still symbolicated. `strip` keeps the image's UUID, which matches the dSYM (a
+ * relink would be another); `strip: false` writes the dSYM alone. Development builds keep theirs. */
+export function stripForDistribution(executable, dsym, { strip = true } = {}) {
   mkdirSync(dirname(dsym), { recursive: true });
   rmSync(dsym, { recursive: true, force: true });
   // dsymutil reports each symbol it could not find in an object file on stderr; only a failure is said.
   run('dsymutil', [executable, '-o', dsym], { stdio: 'ignore' });
+  if (!strip) return { dsym, saved: 0 };
   const before = statSync(executable).size;
   run('strip', ['-x', executable], { stdio: 'ignore' });
   return { dsym, saved: before - statSync(executable).size };
@@ -623,9 +624,9 @@ async function main(args, lockHeld = false) {
     console.error('--tvos takes neither --host nor --embed');
     process.exitCode = 1; return;
   }
-  const tvTarget = device ? tvosDeviceTarget : tvosTarget;
-  if (tv && !read('rustup', ['target', 'list', '--installed'], { cwd: root }).stdout?.split('\n').includes(tvTarget)) {
-    console.error(`--tvos needs Rust's ${tvTarget} std, which this toolchain lacks. Install it with \`rustup target add ${tvTarget}\``);
+  const tvTarget = device ? tvosDeviceTarget : tvosTarget, rustTarget = tv ? tvTarget : 'aarch64-apple-ios';
+  if ((tv || device) && !read('rustup', ['target', 'list', '--installed'], { cwd: root }).stdout?.split('\n').includes(rustTarget)) {
+    console.error(`${tv ? '--tvos' : '--device'} needs Rust's ${rustTarget} std, which this toolchain lacks. Install it with \`rustup target add ${rustTarget}\` (once, in the app's directory so its pinned toolchain gets it)`);
     process.exitCode = 1; return;
   }
   const ipa = args.includes('--archive') ? resolve(process.cwd(), args[args.indexOf('--archive') + 1] ?? '') : null;
@@ -888,8 +889,7 @@ async function main(args, lockHeld = false) {
     const started = Date.now(), compile = crates.filter(crate => !(moduleLib[crate] = kept?.find(crate)));
     for (const crate of compile) moduleLib[crate] = resolve(moduleLibDir, `lib${crate.replaceAll('-', '_')}.dylib`);
     if (compile.length) keptRegistry?.take(moduleTarget, 'modules');
-    const step = compile.length ? startApple('sh', ['-c', 'profile=$1 target=$2 dir=$3 manifest=$4; shift 4; for crate; do cargo build --profile "$profile" -p "$crate" --lib --target "$target" --target-dir "$dir" --manifest-path "$manifest" || exit $?; done',
-      'host-modules', cargoProfile, target, moduleTarget, resolve(root, 'Cargo.toml'), ...compile], resolve(webBuildDir, log), { env: moduleEnv }) : null;
+    const step = compile.length ? startApple('cargo', ['build', '--profile', cargoProfile, ...compile.flatMap(crate => ['-p', crate]), '--lib', '--target', target, '--target-dir', moduleTarget, '--manifest-path', resolve(root, 'Cargo.toml')], resolve(webBuildDir, log), { env: moduleEnv }) : null;
     if (step) beside.push(step);
     return { async done() { await step?.done(); for (const crate of compile) kept?.keep(crate, started); if (compile.length) keptRegistry?.keep(moduleTarget, 'modules', resolve(root, 'Cargo.lock')); } };
   };
@@ -1332,7 +1332,7 @@ async function main(args, lockHeld = false) {
     placeAppleArtifact(binDir, paths.products);
   };
 
-  const bundleTools = {runApple,appleArtifacts, macInfoPlist, copyAppleStaticTrees, writeUsageStrings, receipt, shippedReceipt, assertAppleIdentity, placeAppleArtifact, infoPlist, distributionKeys, copyAppleGpuProducts, entitlements, appClip};
+  const bundleTools = {runApple,appleArtifacts, macInfoPlist, copyAppleStaticTrees, writeUsageStrings, receipt, shippedReceipt, assertAppleIdentity, placeAppleArtifact, infoPlist, distributionKeys, copyAppleGpuProducts, entitlements, appClip, stripForDistribution};
   if (!ios) {
     const bundlePath = assembleMac({intents, shared, library, macWidgets, triple: moduleTripleFor(app, ios, device, tv), appleReach, hasWeb, webLoadName, args, app, paths, binDir, libDir, bin, loadName, hasGpu, dylib, moduleDylibs, looseArms, hasSvg, svgLoadName, modulesLoadName, modulesBuilt, svgBuilt, canvasGpuLoadName, canvasGpuBuilt, sha1, linkRoot, swiftc, buildReceipt, development, bakedCompat, rosterKeys, production, distribution, stampSdk, products, composition, sdk, bakedPlan, cleanup}, bundleTools);
     publishProducts();
@@ -1346,7 +1346,7 @@ async function main(args, lockHeld = false) {
     return;
   }
 
-  const bundles = assembleIOS({intents, shared, library, triple: iosTripleFor(app, device, tv), app, paths, binDir, bin, device, development, appleReach, tv, bakedCompat, bakedPlan, ipa, linkRoot, swiftc, buildReceipt, rosterKeys, sdkName, production, distribution, stampSdk, libDir, gpuArtifacts, looseArms, modulesBuilt, modulesLoadName, hasSvg, svgBuilt, svgLoadName, svgFilterBuilt, svgFilterLibraryName, canvasGpuBuilt, canvasGpuLoadName, args, unsigned, prof, ph, sha1, composition, destination, target, sdk, hasGpu, dylib, alarm: ios && !tv ? alarmActivity(packages) : null}, bundleTools);
+  const { bundles, frameworkSymbols } = assembleIOS({intents, shared, library, triple: iosTripleFor(app, device, tv), app, paths, binDir, bin, device, development, appleReach, tv, bakedCompat, bakedPlan, ipa, linkRoot, swiftc, buildReceipt, rosterKeys, sdkName, production, distribution, stampSdk, libDir, gpuArtifacts, looseArms, modulesBuilt, modulesLoadName, hasSvg, svgBuilt, svgLoadName, svgFilterBuilt, svgFilterLibraryName, canvasGpuBuilt, canvasGpuLoadName, args, unsigned, prof, ph, sha1, composition, destination, target, sdk, hasGpu, dylib, alarm: ios && !tv ? alarmActivity(packages) : null}, bundleTools);
   publishProducts();
   release();
   if (ipa) {
@@ -1356,32 +1356,33 @@ async function main(args, lockHeld = false) {
     mkdirSync(dirname(ipa), { recursive: true });
     rmSync(ipa, { force: true });
     run('ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', resolve(payload, 'Payload'), ipa]);
-    console.log(`host/apple: ${ipa} (${prof ? `signed by ${prof.name}` : 'ad-hoc signed, for re-signing'}, ${timing()}${svgFilterBuilt ? '' : '; no SVG filter kernels (no Metal toolchain)'}); symbols: ${stripped.dsym} (${(stripped.saved / 1048576).toFixed(1)} MB off the executable)`);
+    console.log(`host/apple: ${ipa} (${prof ? `signed by ${prof.name}` : 'ad-hoc signed, for re-signing'}, ${timing()}${svgFilterBuilt ? '' : '; no SVG filter kernels (no Metal toolchain)'}); symbols: ${stripped.dsym} (${(stripped.saved / 1048576).toFixed(1)} MB off the executable)${frameworkSymbols.count ? `, ${frameworkSymbols.dir} (${frameworkSymbols.count} frameworks, ${(frameworkSymbols.saved / 1048576).toFixed(1)} MB off them)` : ''}`);
     return;
   }
   if (args.includes('--no-install')) { if (args.includes('--run')) throw new Error('--no-install takes no --run'); console.log(`host/apple: ${paths.bundle} (${timing()}); built and signed, installed on nothing (--no-install)`); return; }
   const dev = device ? ph : simulator(args.includes('--sim') ? args[args.indexOf('--sim') + 1] : undefined, { tv, app: app.id, dir: app.dir, hint: '--sim <udid|name> (or EXACT_SIM)' });
-  // A phone installs the clip with the app that embeds it; a simulator registers it (`simctl listapps`, a launch
-  // of its id) only when the nested bundle is installed itself (measured on iOS 26.5: the app's install leaves it out).
-  for (const [, kind] of bundles) {
-    const host = kind === 'host', clip = kind === 'clip' ? appClip(app) : null;
-    const placed = clip ? resolve(paths.bundle, 'AppClips', `${clip.executable}.app`) : host ? hostPaths.bundle : paths.bundle;
-    if (device) {
-      if (clip) continue;
-      if (!ph.reachable) throw new Error(`${ph.name} is not connected; signed bundle retained at ${placed}`);
-      run('xcrun', ['devicectl', 'device', 'install', 'app', '--device', ph.udid, placed]);
-    } else install(dev, placed, app, host, !!clip, clip?.executable);
-  }
-  console.log(`host/apple: ${paths.bundle} on ${dev.name}${dev.udid ? ` ${dev.udid}` : ''} (${timing()}); GPU: ${gpuNote}${ios && !svgFilterBuilt ? '; no SVG filter kernels (no Metal toolchain)' : ''}; web arm: ${hasWeb ? webLoadName : 'none'}${modulesBuilt ? `; modules: ${modulesLoadName} (Frameworks, signed)` : ''}`);
-  if (args.includes('--run')) {
-    if (device) run('xcrun', deviceLaunchArgs(ph.udid, app.id, launchEnv));
-    else {
-      showSimulator(dev);
-      run('xcrun', ['simctl', 'launch', '--terminate-running-process', dev.udid, app.id], {
-        env: { ...process.env, ...(launchEnv.EXACT_DEV_PLAN ? { SIMCTL_CHILD_EXACT_DEV_PLAN: launchEnv.EXACT_DEV_PLAN } : {}), SIMCTL_CHILD_EXACT_ASSETS: paths.capture },
-      });
+  const place = () => {
+    // A phone installs the clip with the app that embeds it; a simulator registers it (`simctl listapps`, a launch
+    // of its id) only when the nested bundle is installed itself (measured on iOS 26.5: the app's install leaves it out).
+    for (const [, kind] of bundles) {
+      const host = kind === 'host', clip = kind === 'clip' ? appClip(app) : null;
+      const placed = clip ? resolve(paths.bundle, 'AppClips', `${clip.executable}.app`) : host ? hostPaths.bundle : paths.bundle;
+      if (device) {
+        if (clip) continue;
+        if (!ph.reachable) throw new Error(`${ph.name} is not connected; signed bundle retained at ${placed}`);
+        run('xcrun', ['devicectl', 'device', 'install', 'app', '--device', ph.udid, placed]);
+      } else install(dev, placed, app, host, !!clip, clip?.executable);
     }
-  }
+    console.log(`host/apple: ${paths.bundle} on ${dev.name}${dev.udid ? ` ${dev.udid}` : ''} (${timing()}); GPU: ${gpuNote}${ios && !svgFilterBuilt ? '; no SVG filter kernels (no Metal toolchain)' : ''}; web arm: ${hasWeb ? webLoadName : 'none'}${modulesBuilt ? `; modules: ${modulesLoadName} (Frameworks, signed)` : ''}`);
+    if (args.includes('--run')) {
+      if (device) run('xcrun', deviceLaunchArgs(ph.udid, app.id, launchEnv));
+      else {
+        showSimulator(dev);
+        run('xcrun', ['simctl', 'launch', '--terminate-running-process', dev.udid, app.id], { env: { ...process.env, ...(launchEnv.EXACT_DEV_PLAN ? { SIMCTL_CHILD_EXACT_DEV_PLAN: launchEnv.EXACT_DEV_PLAN } : {}), SIMCTL_CHILD_EXACT_ASSETS: paths.capture } });
+      }
+    }
+  };
+  await (device ? place() : (await import('../../scripts/agent-launch.mjs')).simulatorApps(dev.udid, bundles.flatMap(([, kind]) => kind === 'clip' ? [] : [kind === 'host' ? `${app.id}.host` : app.id]), place, { name: dev.name }));
   } finally { for (const step of beside) step.stop(); for (const path of cleanup.reverse()) rmSync(path, { recursive: true, force: true }); release(); }
 
 }

@@ -23,8 +23,7 @@ const tabsOf = nav => {
 };
 export const panelsOf = nav => tabsOf(nav)[1];
 const stacksOf = nav => { const panels = panelsOf(nav); return panels.length ? panels.map(routesIn) : [nav ? routesIn(nav) : []]; };
-// The shared list/outer-press rule;
-// WIDE is the web's presentation threshold, not a different navigation rule.
+// WIDE is the web's presentation threshold; the list/outer-press rule stays shared.
 const WIDE = "(min-width: 900px)", wide = () => !!globalThis.matchMedia?.(WIDE).matches;
 let splitLists = new WeakMap(), rowOf = new WeakMap(), actionRows = new WeakMap(), visits = new Map();
 const activationRequired = new WeakSet(), activated = new WeakSet();
@@ -124,8 +123,7 @@ export function routeFlags(root) { const off = new Set([...root.querySelectorAll
 const routesOf = nav => stacksOf(nav).find(routes => routes.some(r => r.getAttribute("navigationKey") === nav.getAttribute("navigationKey"))) ?? [];
 const selectedRoute = nav => routesOf(nav).find(r => r.getAttribute("navigationKey") === nav.getAttribute("navigationKey"));
 const browserIndex = () => globalThis.navigation?.currentEntry?.index ?? null;
-// Agent launch facts belong to the carrier, not the router's typed URL. Keep
-// them on every History entry so a browser reload retains its agent adapter.
+// Agent launch facts belong to the carrier, not the router's typed URL: every History entry keeps them, for a reload's agent adapter.
 const agentParameters = ['agent', 'seed', 'locale', 'formatLocale', 'timeZone', 'epoch', 'storage', 'failFetch'];
 export function historyURL(path) { // (exported for its test)
   const facts = AGENT_ADMITTED ? launched() : null;
@@ -326,6 +324,8 @@ function drain() {
 }
 const settled = () => { if (echo === null && !queue.length) for (const finish of [...waiters]) finish(); };
 export const navigation = { personScrolls: 0, // the person's scrolls (`byPerson`) from the page's start: one after a navigation asked a fragment's scroll cancels it (fragment.js)
+  /** A Back or Forward in dispatch (`popped`): its commit lands before `popped` judges it, forgoing a view transition's flight (shared.js). */
+  get traversing() { return pop !== null; },
   /** `dispatch(location)` is false when no `navigate` handler heard it; `back(id)` is the runner's own `back` from visit `id`, `goTo(location)` its own `go`. */
   connect(hostRoot, dispatch, journal, back = null, goTo = null, matchesRoute = () => false, waitForActivation = false) {
     root = hostRoot; navigate = dispatch; log = journal; hostBack = back; hostGo = goTo; routeMatches = matchesRoute; for (const type of ["wheel", "touchmove", "keydown", "pointerdown"]) addEventListener(type, e => { if (byPerson(e)) navigation.personScrolls++; }, { capture: true, passive: true });
@@ -1118,10 +1118,11 @@ let pagePlace; export const reportPlace = () => (pagePlace ??= placeReporter(lau
 // A store write in the page: a secret or state the quota refuses sets the kept answers aside, a cache the runner bounds together, and is tried once more, the kept answers put back if it fails again; a kept answer it refuses leaves the older one, which the next launch may still match, and is said.
 export function storeInPage(storage, name, value, warn = console.warn) { const key = name.startsWith("exact.state.") ? name : "exact.secret." + name, write = () => value == null ? storage.removeItem(key) : storage.setItem(key, value);
   try { try { write(); } catch (e) { if (name.startsWith("exact.kept.") || !/quota/i.test(e?.name ?? "")) throw e; const aside = Array.from({ length: storage.length }, (_, i) => storage.key(i)).filter(k => k?.startsWith("exact.secret.exact.kept.")).map(k => [k, storage.getItem(k)]); for (const [k] of aside) storage.removeItem(k); try { write(); } catch (again) { for (const [k, v] of aside) try { storage.setItem(k, v); } catch {} throw again; } } } catch (e) { warn("exact: store", name, String(e)); return false; } return true; }
-/** Failed writes belong to the page until a later commit persists or replaces them. */ export function pageStore(storage = () => localStorage, warn = console.warn) { const pending = new Map();
-  return { set(name, value) { pending.set(name, { value, warned: false }); }, flush() { for (const [name, entry] of pending) {
-    const report = (...line) => { if (!entry.warned) { entry.warned = true; warn(...line); } }; try { if (storeInPage(storage(), name, entry.value, report)) pending.delete(name); } catch (e) { report("exact: store", name, String(e)); }
-  } } }; }
+/** Failed writes retry under the shared lease, against their original durable value. */ export function pageStore(storage = () => localStorage, warn = console.warn, locks = globalThis.navigator?.locks) { const pending = new Map();
+  return { discard(name) { pending.delete(name); }, set(name, value) { pending.set(name, { value, warned: false }); }, flush() { const jobs = []; for (const [name, entry] of pending) { const key = name.startsWith("exact.state.") ? name : "exact.secret." + name, live = () => pending.get(name) === entry; const report = (...line) => { if (!entry.warned) { entry.warned = true; warn(...line); } }, failed = e => { if (live()) { if (!Object.hasOwn(entry, "before")) pending.delete(name); report("exact: store", name, String(e)); } };
+    const write = () => { try { const disk = storage(), before = disk.getItem(key); if (Object.hasOwn(entry, "before") && entry.before !== before) { pending.delete(name); return; } entry.before = before; if (storeInPage(disk, name, entry.value, report)) pending.delete(name); } catch (e) { failed(e); } };
+    if (Object.hasOwn(entry, "before")) { entry.retry ??= import('./storage-environment.js').then(m => m.retrySecretWrite(key, live, write, locks)).catch(failed).finally(() => { delete entry.retry; }); jobs.push(entry.retry); } else write();
+  } return Promise.all(jobs); } }; }
 // An iframe guest's origin as authored when its `src` or `sandbox` was committed (an opaque
 // sandbox posts as "null"), which a `message` from it must match. The authored document owns
 // the channel: a later load revokes it until the app commits a new source.
@@ -1140,7 +1141,6 @@ export function guestMessageAuthorized(el, eventOrigin) {
   const state = iframeOrigins.get(el);
   return Boolean(state && !state.revoked && (state.opaque ? eventOrigin === "null" : eventOrigin === state.origin));
 }
-
 // A select, range or date is controlled as a text field is: the committed
 // `value` is written when it changes, and shown again after the options change or a refused `type`; after the action
 // that heard the person (`acted`) it keeps their choice, as the web build's does.
@@ -1224,7 +1224,6 @@ export function grantOrigins(memory) {
     } catch { return -1; }
   } };
 }
-
 // grant admission: begin — self-contained; the JS target's build (host/web-js/build.mjs) moves these lines into a module of
 // their own, so a page that admits nothing before a lazy chunk does not carry them; the wasm host keeps them here (boot.mjs).
 // Match only the sealed, typed output of exact-runner's Rust grant parser.
@@ -1448,8 +1447,7 @@ export function coversPath(set, capability, path) {
   return !!target && set.entries.some(([, , grant]) => grant?.[0] === kind && grant.slice(1).every((part, index) => target[index] === part));
 }
 // grant admission: end
-// Text selections use source UTF-16 offsets; a Markdown <br> represents one newline.
-const selectedTexts = new Map();
+const selectedTexts = new Map(); // Text selections use source UTF-16 offsets; a Markdown <br> represents one newline.
 function textSource(e) { return e.nodeType === Node.TEXT_NODE ? e.data : e.nodeName === 'BR' ? "\n" : [...e.childNodes].map(textSource).join(''); }
 function textPosition(e, offset) {
   const walker = document.createTreeWalker(e, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
@@ -1464,19 +1462,22 @@ function selectionRects(e, a, b) {
   const range = document.createRange(); range.setStart(...textPosition(e, a)); range.setEnd(...textPosition(e, b));
   return [...range.getClientRects()].map(r => [r.x, r.y, r.width, r.height, false, false]);
 }
+function selectionChanged() {
+  const s = getSelection(), r = s.rangeCount && !s.isCollapsed ? s.getRangeAt(0) : null;
+  for (const [e, h] of selectedTexts) {
+    if (!e.isConnected) { selectedTexts.delete(e); continue; }
+    const at = (n, o) => { const p = document.createRange(); p.selectNodeContents(e); const c = p.comparePoint(n, o); if (!c) p.setEnd(n, o); return c < 0 ? 0 : textSource(p.cloneContents()).length; };
+    let a = 0, b = 0;
+    if (r?.intersectsNode(e)) { a = at(r.startContainer, r.startOffset); b = at(r.endContainer, r.endOffset); }
+    if (a === b) a = b = 0;
+    if (h.a !== a || h.b !== b) { h.a = a; h.b = b; h.report(textSource(e).slice(a, b), a, b, selectionRects(e, a, b)); }
+  }
+  if (!selectedTexts.size) document.removeEventListener("selectionchange", selectionChanged);
+}
 export function onSelection(e, report) {
-  if (!selectedTexts.size) document.addEventListener("selectionchange", () => {
-    const s = getSelection(), r = s.rangeCount && !s.isCollapsed ? s.getRangeAt(0) : null;
-    for (const [e, h] of selectedTexts) {
-      if (!e.isConnected) { selectedTexts.delete(e); continue; }
-      const at = (n, o) => { const p = document.createRange(); p.selectNodeContents(e); const c = p.comparePoint(n, o); if (!c) p.setEnd(n, o); return c < 0 ? 0 : textSource(p.cloneContents()).length; };
-      let a = 0, b = 0;
-      if (r?.intersectsNode(e)) { a = at(r.startContainer, r.startOffset); b = at(r.endContainer, r.endOffset); }
-      if (a === b) a = b = 0;
-      if (h.a !== a || h.b !== b) { h.a = a; h.b = b; h.report(textSource(e).slice(a, b), a, b, selectionRects(e, a, b)); }
-    }
-  });
-  selectedTexts.set(e, { report, a: 0, b: 0 });
+  const held = { report, a: 0, b: 0 }; selectedTexts.set(e, held);
+  document.addEventListener("selectionchange", selectionChanged);
+  return () => { if (selectedTexts.get(e) === held) selectedTexts.delete(e); if (!selectedTexts.size) document.removeEventListener("selectionchange", selectionChanged); };
 }
 // HTML's methods and source, shared by both web targets.
 export function popoverCommand(method, id, source, say) {

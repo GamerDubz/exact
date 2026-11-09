@@ -937,6 +937,7 @@ impl<D: DataSource> Runner<D> {
             ask_again: false,
             module_again: None,
             effects: request.has_effects(),
+            replay_unsafe: request.has_effects(),
             origin: self.writes.tick(),
             write: match target {
                 Target::Mutation(m) => self.asked_write(m),
@@ -1429,6 +1430,7 @@ impl<D: DataSource> Runner<D> {
                     next.write = p.write;
                     next.reasks = p.reasks;
                     next.effects |= next.continuation.is_some() && effects;
+                    next.replay_unsafe |= p.replay_unsafe;
                 }
                 return self.update();
             }

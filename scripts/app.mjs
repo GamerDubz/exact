@@ -13,10 +13,6 @@ import { macResourceMappings, macResourceInventory, appleAssetCatalogInventory, 
 // script that builds, serves, or drives an app resolves it here, so nothing
 // else knows the difference.
 //   bun host/web/build.mjs weird-castle-web          (EXACT_APP_DIR set)
-//   bun host/apple/build.mjs --ios weird-castle-apple --run
-//   bun host/web/dev.mjs --app weird-castle
-//   bun scripts/agent.mjs --app weird-castle macos tree
-//
 // The app manifest: `app.json` beside
 // `app.contract` — the W3C Web App Manifest's own keys, which the web host
 // copies out as `manifest.json`, plus `app` (identity: the id every platform
@@ -26,9 +22,9 @@ import { macResourceMappings, macResourceInventory, appleAssetCatalogInventory, 
 // validator small enough to live beside the reader; an app without one gets
 // the derived defaults it had before the manifest existed.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, isAbsolute, relative, resolve, sep, toNamespacedPath } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { constants, homedir, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { BINARYEN } from '../host/web/stages.mjs';
@@ -39,7 +35,7 @@ import { bakeOutside, linkable, recordRustBake } from './linked-plan.mjs';
 import { throwContractErrors } from './contract-diagnosis.mjs';
 import { filesystem, installedModules, removePrivateTree, withHostDeployment } from './filesystem.mjs';
 import { startSweep } from './sweep.mjs';
-import { authoredWorkspace, knownWorkspace, rememberWorkspace, shellsDir } from './cargo-check.mjs';
+import { appleCargo, authoredWorkspace, knownWorkspace, rememberWorkspace, shellsDir } from './cargo-check.mjs';
 import { ensureShells } from './app-shells.mjs';
 import { installProblems } from './install-page.mjs';
 import { gameDefaults, lintGame, prepareGame } from '../game/app/shells.mjs';
@@ -197,13 +193,13 @@ export function pathFrom(from, to) {
 
 /** An outside workspace's patches and toolchain, against this checkout's.
  * Refuses with the exact text to paste rather than letting Cargo fail later
- * on a duplicate crate or a missing wasm target. */
+ * on a duplicate crate or a missing wasm target. A patch path is compared as `pathFrom` writes it, through symlinks. */
 export function outsideWorkspaceProblems(workspace) {
   const problems = [];
   const manifest = Bun.TOML.parse(readFileSync(resolve(workspace, 'Cargo.toml'), 'utf8'));
   const theirs = manifest.patch?.['crates-io'] ?? {};
   const root = Bun.TOML.parse(readFileSync(resolve(ROOT, 'Cargo.toml'), 'utf8')).patch?.['crates-io'] ?? {};
-  const wrong = Object.entries(root).filter(([name, spec]) => !theirs[name]?.path || resolve(workspace, theirs[name].path) !== resolve(ROOT, spec.path));
+  const wrong = Object.entries(root).filter(([name, spec]) => !theirs[name]?.path || pathFrom(workspace, resolve(workspace, theirs[name].path)) !== pathFrom(workspace, resolve(ROOT, spec.path)));
   if (wrong.length) problems.push(`${workspace}/Cargo.toml: [patch.crates-io] must name exact2's vendored ${wrong.map(([name]) => name).join(', ')}. Use (or run \`bun exact.mjs update\` in an app \`exact new\` made):\n[patch.crates-io]\n${patchLines(workspace).join('\n')}`);
   // A nested workspace inherits the checkout's pinned toolchain from rustup.
   // An external workspace still needs its own pin.
@@ -850,10 +846,11 @@ export function verifyBakeFiles(receipt, plan, assets) {
       || embedded.plan?.bytes !== plan.length) {
     throw refuse('plan');
   }
-  const copied = ordered(assets), baked = ordered(embedded.assets);
+  const copied = new Map(), baked = new Map();
+  for (const [index, cards] of [[copied, assets], [baked, embedded.assets]]) for (const card of ordered(cards)) if (!index.has(card.name)) index.set(card.name, card);
   const same = (a, b) => a && b && ['name', 'sha256', 'bytes'].every((key) => a[key] === b[key]);
-  const differ = [...new Set([...copied, ...baked].map((a) => a.name))]
-    .filter((name) => !same(copied.find((a) => a.name === name), baked.find((a) => a.name === name)));
+  const differ = [...new Set([...copied.keys(), ...baked.keys()])]
+    .filter((name) => !same(copied.get(name), baked.get(name)));
   if (differ.length) throw refuse(`static files (${differ.slice(0, 3).join(', ')}${differ.length > 3 ? `, ${differ.length - 3} more` : ''})`);
 }
 
@@ -896,14 +893,14 @@ const under = (root, path) => {
 const orderedBuild = (rows) => rows.sort((a, b) => Buffer.compare(Buffer.from(canonicalBuild(a)), Buffer.from(canonicalBuild(b))));
 function buildCommand(command, args, app, env, stderr = 'pipe') {
   if (command === 'cargo') env = cargoEnvironment(env);
-  let result = spawnSync(command, args, { cwd: app.workspace, env, stdio: ['ignore','pipe',stderr], encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 });
+  let result = spawnSync(...appleCargo(command, args, { cwd: app.workspace, env, stdio: ['ignore','pipe',stderr], encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 }));
   // An offline Cargo that lacks a source it needs (a new workspace, a new
   // lock entry) fetches the lock's sources once and tries again, instead of
   // failing on the first missing crate.
   if (command === 'cargo' && result.status !== 0 && /--offline was specified|attempting to make an HTTP request|in the offline mode|offline mode \(via `--offline`\)/.test(result.stderr ?? '')) {
     console.error(`${app.name}: Cargo's sources are not all fetched; fetching the locked ones (cargo fetch --locked) and trying again`);
     const fetched = spawnSync('cargo', ['fetch', '--locked'], { cwd: app.workspace, env, stdio: ['ignore', 'inherit', 'inherit'] });
-    if (fetched.status === 0) result = spawnSync(command, args, { cwd: app.workspace, env, stdio: ['ignore','pipe',stderr], encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 });
+    if (fetched.status === 0) result = spawnSync(...appleCargo(command, args, { cwd: app.workspace, env, stdio: ['ignore','pipe',stderr], encoding: 'utf8', maxBuffer: 128 * 1024 * 1024 }));
   }
   if (result.error || result.status !== 0) {
     if (command === 'cargo') throwContractErrors(app, args, result, ROOT);
@@ -1167,7 +1164,7 @@ function completeBuild(app, platform, target, graph, messages, roots, env, prepa
   const launchImage = platform === 'ios' ? launchImageInventory(app) : null;
   if (launchImage) add(resolve(app.dir, launchImage.src));
   const metadata={...(appleAssetCatalogs.length ? {appleAssetCatalogs} : {}),...(launchImage ? {launchImage} : {}),...(nativeResources.length ? {nativeResources} : {}),...nativeManifestMetadata(app.manifest, platform),delivery:compat.delivery,store:compat.inputs.store,keys:compat.inputs.keys};
-  const configuration={target,units:orderedBuild([...new Map(units.map(u=>[canonicalBuild(u),u])).values()]),builders:orderedBuild([...new Map(builders.map(u=>[canonicalBuild(u),u])).values()]),rustc:buildCommand('rustc',['-vV'],app,env).stdout,flags:{...Object.fromEntries(['RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','MACOSX_DEPLOYMENT_TARGET','IPHONEOS_DEPLOYMENT_TARGET'].map((k)=>[k,env[k]??null])),...(env.EXACT_WEB_LINK?{EXACT_WEB_LINK:env.EXACT_WEB_LINK}:{}),...(env.EXACT_WEB_SIZE?{EXACT_WEB_SIZE:env.EXACT_WEB_SIZE}:{})}};
+  const configuration={target,units:orderedBuild([...new Map(units.map(u=>[canonicalBuild(u),u])).values()]),builders:orderedBuild([...new Map(builders.map(u=>[canonicalBuild(u),u])).values()]),rustc:buildCommand('rustc',['-vV'],app,env).stdout,flags:{...Object.fromEntries(['RUSTFLAGS','CARGO_ENCODED_RUSTFLAGS','MACOSX_DEPLOYMENT_TARGET','IPHONEOS_DEPLOYMENT_TARGET','TVOS_DEPLOYMENT_TARGET','WATCHOS_DEPLOYMENT_TARGET'].map((k)=>[k,env[k]??null])),...(env.EXACT_WEB_LINK?{EXACT_WEB_LINK:env.EXACT_WEB_LINK}:{}),...(env.EXACT_WEB_SIZE?{EXACT_WEB_SIZE:env.EXACT_WEB_SIZE}:{})}};
   const files=[...inputs.values()].sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);
   const fingerprint={files:files.map(({name,sha256})=>({name,sha256})),absent:[...absent.keys()].sort(),configuration,metadata};
   const products=roots.flatMap((r)=>messages.filter((m)=>m.reason==='compiler-artifact'&&m.package_id===r.package&&m.target.name===r.name).flatMap((m)=>m.filenames)).filter((p)=>!p.endsWith('.d')&&!p.endsWith('.dSYM')).map((path)=>prepared.get(path)??path).map((path)=>{const info=statSync(path);return {path,bytes:info.size,sha256:hashes.of(path,info)};});
@@ -1175,28 +1172,33 @@ function completeBuild(app, platform, target, graph, messages, roots, env, prepa
   return {version:1,...(env.EXACT_RUST_BUNDLE?{rust:resolve(baked,'rust')}:{}),...(baked!==rootOutput?{linkedPlan:baked}:{}),...bakedSettings(baked,app.dir),trust:env.EXACT_UPDATE_TRUST??'development',compat,graph:bundleGraph,binary:{...(assetCatalogApp ? {assetCatalogApp} : {}),...(nativeResources.length ? {nativeResourceApp:{dir:app.dir,manifest:app.manifest}} : {}),sha256:buildHash(canonicalBuild(fingerprint)),...fingerprint,inputs:files,directories:[...directories.values()],missing:[...absent.values()]},products};
 }
 
-/** Ephemeral output ownership shared by Apple builders and Cargo bakes.
- * Never steal a stale claim: the operator must verify its PID first. */
+// The permanent companion inode owns exclusion; the JSON claim is only its diagnostic record.
+let buildLock;
 export function claimBuildOutput(app, path) {
-  mkdirSync(resolve(path, '..'), { recursive: true });
-  try { writeFileSync(path, JSON.stringify({ pid: process.pid, app: app.id, source: realpathSync(app.dir), started: new Date().toISOString() }) + '\n', { flag: 'wx' }); }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    const held = readFileSync(path, 'utf8');
-    // A killed build never runs its exit handler: a claim whose process is
-    // gone, or whose pid now names a process started after it, is stale.
-    if (!claimLive(held) && readFileSync(path, 'utf8') === held) { rmSync(path, { force: true }); return claimBuildOutput(app, path); }
-    throw new Error(`Apple build busy for ${app.id}: ${held.trim()} (${path}); remove this lock explicitly only after verifying the owner is no longer running`);
+  if (!buildLock) {
+    const { dlopen, read } = import.meta.require('bun:ffi'), errno = process.platform === 'darwin' ? '__error' : '__errno_location';
+    const { symbols } = dlopen(process.platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6', { flock: { args: ['i32', 'i32'], returns: 'i32' }, [errno]: { args: [], returns: 'ptr' } });
+    buildLock = fd => { if (symbols.flock(fd, 6) === 0) return true; const code = read.i32(symbols[errno]()); if (code === constants.errno.EWOULDBLOCK) return false; throw new Error(`cannot lock build output: errno ${code}`); };
   }
+  mkdirSync(resolve(path, '..'), { recursive: true });
+  const fd = openSync(`${path}.flock`, 'a');
+  const busy = () => { let held = 'another build'; try { held = readFileSync(path, 'utf8').trim(); } catch {} return new Error(`Apple build busy for ${app.id}: ${held} (${path})`); };
+  try {
+    if (!buildLock(fd)) throw busy(); // LOCK_EX | LOCK_NB; close releases it even after process death.
+    writeFileSync(path, JSON.stringify({ pid: process.pid, app: app.id, source: realpathSync(app.dir), started: new Date().toISOString() }) + '\n');
+  } catch (error) { closeSync(fd); throw error; }
   let held = true;
-  const release = () => { if (held) { held = false; rmSync(path); process.removeListener('exit', release); } };
+  const release = () => {
+    if (!held) return;
+    held = false; process.removeListener('exit', release);
+    try { rmSync(path, { force: true }); } finally { closeSync(fd); }
+  };
   process.once('exit', release);
   return release;
 }
-
 /** A claim on an output several apps share and each holds briefly (the Swift
  * scratch): wait for a live owner instead of refusing. `waiting` hears the
- * owner's app once. A dead owner's claim is taken, as claimBuildOutput takes it. */
+ * owner's app once. */
 export function awaitBuildOutput(app, path, waiting) {
   const pause = new Int32Array(new SharedArrayBuffer(4));
   for (let told = false; ; Atomics.wait(pause, 0, 0, 200)) {

@@ -1,5 +1,5 @@
 #!/bin/sh
-':' //; if [ -n "$BUN" ]; then exec "$BUN" "$0" "$@"; elif [ -x "$HOME/.bun-1.4.2/bin/bun" ]; then exec "$HOME/.bun-1.4.2/bin/bun" "$0" "$@"; else exec bun "$0" "$@"; fi
+':' //; if [ -n "$BUN" ]; then exec "$BUN" "$0" "$@"; elif [ -x "$HOME/.bun-1.4.2/bin/bun" ]; then exec "$HOME/.bun-1.4.2/bin/bun" "$0" "$@"; elif command -v bun >/dev/null 2>&1; then exec bun "$0" "$@"; else exec "$HOME/.bun/bin/bun" "$0" "$@"; fi
 // exact — run an Exact app from a terminal on macOS, and install one so it
 // keeps running from a terminal after you close the laptop.
 //
@@ -1155,9 +1155,10 @@ function sections(text) {
 /** A query (its words singular, by one space) whose section ranking alone misses, because it is said in passing more
  *  densely elsewhere or its section says it in other words ("dark mode": light and dark), and its section's heading. */
 const TOPICS = {
-  log: 'Inspection and testing', sheet: 'Recipe: a navigation stack', push: 'Recipe: a navigation stack',
+  log: 'The driver\'s operations', sheet: 'Recipe: a navigation stack', push: 'Recipe: a navigation stack',
   'tab bar': 'Recipe: tabs', 'back button': 'Recipe: a navigation stack', share: 'Host commands',
   'dark mode': 'Recipe: theme: colours, light and dark, icons',
+  'safe area': 'Declarations',
   font: 'Recipe: app.json, assets and modules', image: 'Recipe: app.json, assets and modules',
   deploy: 'Recipe: porting an app, a release build, splitting the work',
   accessibility: 'Native views: accessibility', strings: 'Recipe: app.json, assets and modules',

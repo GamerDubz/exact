@@ -91,6 +91,9 @@ pub mod text;
 mod travel;
 #[cfg(target_os = "linux")]
 pub mod vnc;
+#[cfg(all(test, unix, not(target_os = "linux")))]
+#[path = "vnc/auth.rs"]
+mod vnc_auth;
 mod wake;
 mod zone;
 

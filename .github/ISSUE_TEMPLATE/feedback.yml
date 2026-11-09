@@ -1,0 +1,41 @@
+name: Feedback
+description: A bug, a platform tell, a confusing doc, or something an agent could not do with Exact.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks. Issues are worked by coding agents, so an exact report gets an exact fix. A
+        vulnerability goes to the contact in SECURITY.md, not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Paste error text as it was printed.
+    validations:
+      required: true
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      multiple: true
+      options:
+        - Web
+        - macOS
+        - iOS
+        - tvOS
+        - Linux
+        - Android
+        - Windows
+        - Terminal
+        - Not specific to a host
+  - type: textarea
+    id: smallest
+    attributes:
+      label: Smallest app that shows it
+      description: An `app.contract` (and `app.ts` if it matters), or the prompt you gave an agent.
+      render: text
+  - type: input
+    id: commit
+    attributes:
+      label: Exact commit
+      description: "`git rev-parse --short HEAD` in your checkout."
