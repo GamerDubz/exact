@@ -119,6 +119,10 @@ pub const HOST_COMMANDS: &[&str] = &[
     // screen, as HTML's Element.requestFullscreen(); `fullscreenchange` says
     // when it did and when it left.
     "requestFullscreen",
+    // `exitFullscreen()`: the document leaves full
+    // screen, as the web's `document.exitFullscreen()`; on the Mac the
+    // session's window leaves its full-screen space.
+    "exitFullscreen",
     // `requestPictureInPicture("id")`: the `image` with that HTML id floats
     // in the platform's picture-in-picture window, which shows each picture
     // its `src` names next; `enterpictureinpicture` and
@@ -156,6 +160,11 @@ pub const HOST_COMMANDS: &[&str] = &[
     // sets the root size `rem` follows, over the host's; `"medium"` hands it
     // back. The runner's own; the web also sets it on the document.
     "setRootFontSize",
+    // Electron's `webContents.setZoomFactor`:
+    // `setPageZoom(factor)` sets the window's page zoom, as View ▸ Zoom In
+    // does. The host's own; the web refuses it (the browser's zoom is the
+    // person's).
+    "setPageZoom",
     // `setMode("dark-style", "dim")`: the window's app
     // modes, as `setScheme` is its scheme. The runner's own.
     "setMode",
@@ -202,11 +211,20 @@ pub const HOST_COMMANDS: &[&str] = &[
     // `event.stopPropagation()` for the same event: no ancestor's `key`
     // handler hears it, and its default still happens.
     "stopPropagation",
-    // `window.close()`: the window closes without asking
+    // Observe's custom event, attributes added to every later event, and a
+    // caught error. The Observe module sends them when the app links it.
+    "observe",
+    "observeAttributes",
+    "observeError",
+    // `window.close()` (studio diary R17): the window closes without asking
     // its `beforeunload` again — what an app calls once its own "Save
     // changes?" is answered. An action prop named `close` may be bound, but
     // calling it is refused as ambiguous (`syntax-call-ambiguous`).
     "close",
+    // `setWindowOpacity(n)`: the session's window is
+    // drawn at that opacity, 0 to 1, as Electron's `BrowserWindow.setOpacity`.
+    // The Mac's; the web refuses it (a page has no window to fade).
+    "setWindowOpacity",
     // `playSound(src, at=, gain=, group=, playbackRate=, pan=)`,
     // `playSounds(hits)` and `stopSounds(group=)`: the runner keeps the voice
     // table, so every host skips them as the runner's own.

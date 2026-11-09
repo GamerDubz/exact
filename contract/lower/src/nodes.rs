@@ -344,27 +344,30 @@ impl Lowerer<'_> {
         let sheet_page = self.nav_place.sheet_page(expanded, *span);
         let expanded = sheet_page.as_deref().unwrap_or(expanded);
         let nav_place = self.nav_place.enter(tag, expanded, children, *span)?;
-        // Only the first root selects navigation; an
-        // iframe's `navigate` is its guest's.
-        if tag != "iframe"
-            && has(&["navigate"])
-            && (parent_tag.is_some()
-                || arm.is_some()
-                || order != 0
-                || !has(&["navigationKey"])
-                || !has(&["navigationBack"]))
-        {
-            return err(
-                "lower-navigate-root",
-                "`navigate` belongs to the navigation root (the first root, with navigationKey)",
-                *span,
-            );
+        // only the first root selects navigation; an
+        // iframe's `navigate` is its guest's. The history
+        // swipe and the ways through history offered are the root's too.
+        let elsewhere = parent_tag.is_some()
+            || arm.is_some()
+            || order != 0
+            || !has(&["navigationKey"])
+            || !has(&["navigationBack"]);
+        for name in ["navigate", "historyswipe", "navigationHistory"] {
+            if (tag != "iframe" || name != "navigate") && has(&[name]) && elsewhere {
+                return err(
+                    "lower-navigate-root",
+                    format!("`{name}` belongs to the navigation root (the first root, with navigationKey)"),
+                    *span,
+                );
+            }
         }
-        // The state parts, folded or recorded.
-        let target = if control.is_some() || t.node_type == NodeType::Control {
-            Some("a native control")
+        // the state parts, folded or recorded.
+        let target = if native_button {
+            Some(crate::states::StateTarget::NativeButton)
+        } else if control.is_some() || t.node_type == NodeType::Control {
+            Some(crate::states::StateTarget::NativeControl)
         } else if self.row_depth == 1 {
-            Some("a list's row, whose press is the cell's highlight")
+            Some(crate::states::StateTarget::ListRow)
         } else {
             None
         };

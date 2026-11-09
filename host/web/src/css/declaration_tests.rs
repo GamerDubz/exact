@@ -181,7 +181,7 @@ fn layout_rows_keep_their_css() {
         ),
         (
             vec![(StyleId::Direction, t("rtl"))],
-            "direction:rtl;--exact-separator-x:100%;",
+            "direction:rtl;--exact-separator-x:100%;--exact-separator-dir:-1;",
         ),
         // Canonical, each axis a percentage or px.
         (

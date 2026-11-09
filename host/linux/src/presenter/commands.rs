@@ -96,6 +96,10 @@ impl<D: DataSource> Presenter<D> {
                 // Outside a bubbling event (a key's, focus's, the pointer's
                 // or a wheel's, which take theirs), nothing to prevent or stop.
                 "preventDefault" | "stopPropagation" => {}
+                // Recorded in the journal for launch parts such as Observe.
+                n @ ("observe" | "observeAttributes" | "observeError") => {
+                    crate::journal::host_command(n, &c.args)
+                }
                 // The shell's share sheet; with no shell, refused into the
                 // journal. Held for the agent like every host.
                 "share" => self.share(&c.args, c.source),
@@ -163,13 +167,24 @@ impl<D: DataSource> Presenter<D> {
                 // no media player or floating window: known, and named so.
                 name @ ("copyText" | "openURL" | "format" | "reload" | "close" | "fastSeek"
                 | "load" | "exitPictureInPicture") => {
-                    eprintln!("exact: {name} unsupported on the headless/DRM host")
+                    eprintln!("exact: {name} unsupported on the headless/DRM host");
+                    if name == "openURL" {
+                        self.answer_open(&c.args, false);
+                    }
                 }
                 // The image hears the refusal too, once the commands have run.
                 "requestPictureInPicture" => {
                     eprintln!("exact: requestPictureInPicture unsupported on the headless/DRM host");
                     floats.extend(c.args.first().and_then(exact_plan::Value::as_str).map(str::to_owned));
                 }
+                // A window that fades or leaves full screen is the Mac's so far.
+                name @ ("exitFullscreen" | "setWindowOpacity") => self
+                    .host
+                    .log(format!("{name} refused: the window's full screen and opacity are on the Mac host only")),
+                // A page zoom is the Mac's so far.
+                "setPageZoom" => self
+                    .host
+                    .log("setPageZoom refused: page zoom is on the Mac host only"),
                 // Recording a trace is the Apple hosts'
                 name @ ("startTrace_EXPERIMENTAL" | "stopTrace_EXPERIMENTAL") => self
                     .host

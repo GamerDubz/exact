@@ -38,6 +38,9 @@ package final class TextArea: NSTextView {
     /// drawn again for (FieldAtoms.swift).
     var atomElements: [AtomElement] = []
     var atomLook: (window: ObjectIdentifier?, tokens: [NSObjectProtocol]) = (nil, [])
+    /// Where the atom under the pointer starts, and the tracking that finds it, while a kind has `:hover` paint.
+    package var hoveredAtom: Int?
+    var atomHover: (AnyObject, NSTrackingArea)?
     // A pill is its atom's element where assistive technology points (`atomElement(atScreen:)`).
     package override func accessibilityHitTest(_ point: NSPoint) -> Any? { atomElement(atScreen: point) ?? super.accessibilityHitTest(point) }
     // A press on a pill is the atom's; the arrow over one, as over a token.
@@ -63,8 +66,8 @@ package final class TextArea: NSTextView {
     package override var focusRingMaskBounds: NSRect {
         guard let owner else { return super.focusRingMaskBounds }
         if !owner.isNativeTextControl { return convert(owner.focusRingMaskBounds, from: owner) }
-        guard let scroll = owner.textAreaScroll else { return super.focusRingMaskBounds }
-        return convert(scroll.bounds, from: scroll)
+        guard let scroll = owner.textAreaScroll else { return uncovered(super.focusRingMaskBounds) }
+        return uncovered(convert(scroll.bounds, from: scroll))
     }
     package override func drawFocusRingMask() {
         guard let owner else { super.drawFocusRingMask(); return }
@@ -331,23 +334,23 @@ package final class TextArea: NSTextView {
                 .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
                 .foregroundColor: placeholderColor ?? (owner?.isNativeTextControl == true ? ThemeRoles.color("placeholder", in: self, or: NSColor.placeholderTextColor) : (textColor ?? SystemColor.canvasText).withAlphaComponent(0.3)),
             ]
+            // Its lines are typed text's lines, by the line height typing takes.
+            let style = (typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
             // A Markdown editor's placeholder sits at its first line's start,
             // as UIKit's and the web's do: string drawing aligns
             // natural text by the app's layout direction, not the paragraph's,
             // so the side is said.
             if let markup {
-                let style = NSMutableParagraphStyle(), direction = markup.direction(at: 0)
+                let direction = markup.direction(at: 0)
                 style.baseWritingDirection = direction
                 style.alignment = direction == .rightToLeft ? .right : .left
-                attributes[.paragraphStyle] = style
             } else if let owner {
                 // A plain field's at its start, by its own direction.
-                let style = NSMutableParagraphStyle()
                 style.baseWritingDirection = owner.fieldBaseDirection
                 style.alignment = owner.fieldAlignment
-                attributes[.paragraphStyle] = style
             }
-            (placeholder as NSString).draw(in: rect, withAttributes: attributes)
+            attributes[.paragraphStyle] = style
+            drawingAntialiased(owner?.drawsAntialiased == true) { (placeholder as NSString).draw(in: rect, withAttributes: attributes) }
         }
     }
 }
@@ -513,6 +516,7 @@ extension NodeView {
         f.textColor = fieldInk
         f.insertionPointColor = caretColor
         (f as? TextArea)?.placeholderColor = placeholderColor
+        f.drawAntialiased(drawsAntialiased)
         let native = isNativeTextControl && !fieldInCell
         textAreaScroll?.borderType = native ? .bezelBorder : .noBorder
         textAreaScroll?.focusRingType = native && !outlineNone ? .default : .none
@@ -522,13 +526,9 @@ extension NodeView {
         f.backgroundColor = ThemeRoles.color("Field", in: self, or: .textBackgroundColor)
         f.focusRingType = outlineNone ? .none : native ? .default : .exterior
         restyleFieldFocus()
-        f.textContainerInset = native ? FieldChromeCache.textareaInset(for: effectiveAppearance, scale: window?.backingScaleFactor ?? 1) : .zero
+        f.textContainerInset = native ? FieldChromeCache.textareaInset(for: effectiveAppearance, scale: pixelScale ?? 1) : .zero
         let paragraph = NSMutableParagraphStyle()
-        if let height = usedLineHeight {
-            paragraph.minimumLineHeight = height
-            paragraph.maximumLineHeight = height
-            if height == 0 { paragraph.lineHeightMultiple = .leastNormalMagnitude }
-        }
+        if let font = f.font { paragraph.setLineHeight(usedLineHeight, font: font, scale: pixelScale ?? 1) }
         if (f as? TextArea)?.markup == nil { paragraph.baseWritingDirection = fieldBaseDirection }
         // A native one's unsaid alignment is `start`; one of `appearance: none` aligns each paragraph to the
         // base's start (natural) unless the author says otherwise.
@@ -561,7 +561,8 @@ extension NodeView {
         layoutResizeGrip()
     }
     package func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
-        TextInputLimit.allows(textView.string, range: affectedCharRange, replacement: replacementString ?? "", props: props)
+        presenter?.fieldSelections.replacing.contains(id) == true
+            || TextInputLimit.allows(textView.string, range: affectedCharRange, replacement: replacementString ?? "", props: props)
     }
     package func textDidChange(_ notification: Notification) {
         guard let f = textArea else { return }
@@ -682,7 +683,7 @@ final class Field: NSTextField {
     override func accessibilityPerformDecrement() -> Bool { numberOwner?.step(up: false) ?? super.accessibilityPerformDecrement() }
     override class var cellClass: AnyClass? { get { FieldCell.self } set {} }
     override func becomeFirstResponder() -> Bool { focused(delegate) { super.becomeFirstResponder() } }
-    override var focusRingMaskBounds: NSRect { bareFieldMask(self) ?? super.focusRingMaskBounds }
+    override var focusRingMaskBounds: NSRect { uncovered(bareFieldMask(self) ?? super.focusRingMaskBounds) }
     override func drawFocusRingMask() { if !drawBareFieldMask(self) { super.drawFocusRingMask() } }
 }
 /// The editor an `input`'s field edits in (`FieldCell.fieldEditor(for:)`):
@@ -799,7 +800,7 @@ final class SecureField: NSSecureTextField {
     override var acceptsFirstResponder: Bool { currentEditor() == nil && super.acceptsFirstResponder }
     override class var cellClass: AnyClass? { get { SecureFieldCell.self } set {} }
     override func becomeFirstResponder() -> Bool { focused(delegate) { super.becomeFirstResponder() } }
-    override var focusRingMaskBounds: NSRect { bareFieldMask(self) ?? super.focusRingMaskBounds }
+    override var focusRingMaskBounds: NSRect { uncovered(bareFieldMask(self) ?? super.focusRingMaskBounds) }
     override func drawFocusRingMask() { if !drawBareFieldMask(self) { super.drawFocusRingMask() } }
 }
 extension NSTextField {

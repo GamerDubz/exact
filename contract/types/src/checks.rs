@@ -4,11 +4,13 @@ use super::{
     arms, disagree, err, infer, ComponentTypes, Ref, Scope, Shapes, Sink, Ty, TypeError, Types,
 };
 use contract_syntax::{
-    Attr, Component, Expr, File, Node, Owner, Span, TemplatePart, TypeExpr, HOST_COMMANDS,
+    Attr, Component, Expr, File, Node, Owner, Span, TemplatePart, TypeExpr, UnOp, HOST_COMMANDS,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
 mod midi;
+mod observe;
+mod open_url;
 mod permission;
 mod sounds;
 
@@ -903,6 +905,30 @@ pub(super) fn check_command(
     if matches!(name, "showPopover" | "hidePopover" | "togglePopover") {
         return super::selection::popover_args(name, args, scope, shapes, span);
     }
+    if name == "exitFullscreen" && !args.is_empty() {
+        return err(
+            "type-exit-fullscreen",
+            "`exitFullscreen()` takes no arguments: the document (on the Mac, the window) leaves full screen",
+            span,
+        );
+    }
+    // one opacity, 0 (unseen) to 1 (opaque).
+    if name == "setWindowOpacity" {
+        let fits = match args {
+            [Expr::Number(n, _)] => (0.0..=1.0).contains(n),
+            [Expr::Unary(UnOp::Neg, inner, _)] => matches!(**inner, Expr::Number(n, _) if n == 0.0),
+            [arg] => matches!(infer(arg, scope, shapes)?, Ty::Number),
+            _ => false,
+        };
+        if fits {
+            return Ok(());
+        }
+        return err(
+            "type-window-opacity",
+            "`setWindowOpacity(opacity)` takes the window's opacity as a number from 0 (unseen) to 1 (opaque)",
+            span,
+        );
+    }
     if name == "close" && args.len() > 1 {
         return err(
             "type-close",
@@ -925,6 +951,9 @@ pub(super) fn check_command(
     }
     if name == "requestPermission" {
         return permission::args(args, scope, shapes, span);
+    }
+    if name == "openURL" {
+        return open_url::args(args, scope, shapes, span);
     }
     if name.starts_with("show") && name.ends_with("Picker") && name != "showPicker" {
         return picker_args(name, args, scope, shapes, span);
@@ -979,7 +1008,24 @@ pub(super) fn check_command(
     if name == "setRootFontSize" {
         return root_font_size_args(args, scope, shapes, span);
     }
-    // An axis and its value; lowering checks literal
+    // one factor, CSS px per device-independent
+    // pixel: 1 is Actual Size.
+    if name == "setPageZoom" {
+        let fits = match args {
+            [Expr::Number(n, _)] => *n > 0.0,
+            [arg] => matches!(infer(arg, scope, shapes)?, Ty::Number),
+            _ => false,
+        };
+        if fits {
+            return Ok(());
+        }
+        return err(
+            "type-page-zoom",
+            "`setPageZoom(factor)` takes the page zoom as a number above 0: `setPageZoom(1.25)` is 125%, `setPageZoom(1)` Actual Size",
+            span,
+        );
+    }
+    // an axis and its value; lowering checks literal
     // ones against the design's axes.
     if name == "setMode" {
         let [axis, value] = args else {
@@ -1001,6 +1047,9 @@ pub(super) fn check_command(
     }
     if matches!(name, "requestMIDIAccess" | "sendMIDI") {
         return midi::args(name, args, scope, shapes, span);
+    }
+    if name.starts_with("observe") {
+        return observe::args(name, args, scope, shapes, span);
     }
     if name == "postMessage" {
         // The web's argument order, `postMessage(message, target)`: the target

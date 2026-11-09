@@ -326,7 +326,19 @@ impl Batch {
             }
             let _ = write!(s, "{id}");
         }
-        s.push_str("]}");
+        // The route pattern and params name the screen in navigation metrics.
+        s.push_str("],\"pattern\":");
+        quote(&change.pattern, &mut s);
+        s.push_str(",\"params\":{");
+        for (i, (k, v)) in change.params.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            quote(k, &mut s);
+            s.push(':');
+            quote(v, &mut s);
+        }
+        s.push_str("}}");
         self.ops.push(s);
     }
 
@@ -499,6 +511,10 @@ impl Batch {
                 ",\"loopback\":{{\"host\":\"{host}\",\"port\":{port},\"path\":"
             ));
             quote(&path, &mut s);
+            if let Some(message) = &session.message {
+                s.push_str(",\"message\":");
+                quote(message, &mut s);
+            }
             s.push_str("},\"state\":");
             quote(&session.state, &mut s);
         }

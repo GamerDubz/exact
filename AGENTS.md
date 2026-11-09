@@ -2,12 +2,19 @@
 
 **Building an app with Exact rather than working on it?** This checkout is the version to use:
 Exact has no releases, tags or npm package, and an app uses the checkout by path. Make it with
-`bun scripts/exact.mjs new <path>` and read `docs/start-here.md`, or for a website
-`docs/start-here-site.md`: it is the only required reading. The rest (`docs/contract-for-agents.md`, `docs/agent-pitfalls.md`, `docs/contract-grammar.md`,
+`bun scripts/exact.mjs new <path>`. A website (pages served to a browser) reads only
+`docs/start-here-site.md`; any other app reads `docs/start-here.md`. That guide is the only
+required reading. The rest (`docs/contract-for-agents.md`, `docs/agent-pitfalls.md`, `docs/contract-grammar.md`,
 `docs/reference.md`) is lookup only, by the section its table names: do not read the long
 guides front to back. `docs/recipes/` answers the common questions in one short file each,
 `contract vocab <name>` answers for any tag or property, every `bun exact.mjs <verb>
 --help` names its flags, and `apps/shelf` is a whole app to grep.
+
+**Feedback (required when building an app).** When a doc was wrong or missing, a workaround was
+needed, something took several tries or a command confused you, record it from the app's directory:
+`bun exact.mjs feedback note "<what happened>"`. It attaches exact2's commit and the last command's exit
+code, never output or code. It goes to Expo only as `bun exact.mjs feedback status` says (skip it under `never`);
+`EXACT_FEEDBACK=0` stops it on the machine (docs/diary.md).
 
 Working on exact2 itself: read `rules/RULES.md` first. `docs/agent-pitfalls.md` lists verified
 footguns in writing apps here; add to it when you hit one.
@@ -94,6 +101,14 @@ section binds (`rules/RULES.md`, "Agents").
   app runs (the kernel, the runner, a host, the app itself), build and launch the apps it
   touches (`bun host/apple/build.mjs --ios <app>-apple --run`, `bun host/web/dev.mjs --app
   <app>`) and use them as a person would, with `scripts/agent.mjs` or by hand.
+- `bun scripts/affected.mjs` lists the test suites a branch's changes can affect (the working
+  tree included) and the command for each; `--run` runs the Cargo and Bun ones, and `--why
+  <suite>` says why one was selected. A suite reads its Cargo dependencies, its imports and
+  what its tests name. Shared code that names an app or a host only builds what its caller
+  asks for, so an Excord change runs Excord's tests and a Linux host change runs no XCTest. A
+  change to Swift test files alone runs only the XCTest classes they reach (`--only`). A
+  read that nothing names can escape the selection; `--audit <suite>` runs a suite with the
+  units outside its inputs unreadable to look for one (`docs/testing.md`). Advice, not a check.
 - An unset `EXACT_UPDATE_TRUST` bakes development trust, which checks only an
   origin named by `EXACT_UPDATE_ORIGIN`. `EXACT_UPDATE_TRUST=production` native
   bakes require an authenticated `EXACT_UPDATE_RECEIPT` or explicit new-stream
@@ -141,9 +156,9 @@ section binds (`rules/RULES.md`, "Agents").
   `exact-render`, …), `js/`, `gpu/` and most apps are
   not tested by it (the sixth check compiles them, their tests too, and runs none),
   so the gate does not catch their failing tests. When you touch one, or
-  what its tests read, run its tests before landing: `cargo test -p exact-linux --lib
-  --tests --no-fail-fast`, or `--bins` for a bin-only crate such as `exact-web-js`.
-  Advice, not a check.
+  what its tests read, run its tests before landing (`bun scripts/affected.mjs` names
+  them): `cargo test -p exact-linux --lib --tests --no-fail-fast`, or `--bins` for a
+  bin-only crate such as `exact-web-js`. Advice, not a check.
 - Verify by running, never by grepping. Fix loops get three rounds, then stop and say so.
 - To see a change work, drive the app: `bun scripts/agent.mjs <web|macos|ios|linux> tree
   "tap change-station" "type station-search Palo" "clock +60000" state logs "screenshot

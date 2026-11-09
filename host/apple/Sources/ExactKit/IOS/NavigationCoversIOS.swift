@@ -54,6 +54,11 @@ extension NavigationHost {
     func reportCovers() {
         var changes: [(UInt32, HostCover?)] = []
         var wanted: [UInt32: HostCover] = [:]
+        #if os(iOS)
+        if #available(iOS 27.1, *) {
+            for id in presenter.arrangements.hiddenPanes { wanted[id] = .whole }
+        }
+        #endif
         for c in controllers.values where presenter.views[c.node.id] === c.node {
             // A lifted header takes no room, on a stack yet or not (`coverLifted`).
             for node in (c.lifted.map({ [$0] }) ?? c.barNodes) + [c.scoped].compactMap({ $0 }) { wanted[node.id] = .whole }
@@ -82,6 +87,7 @@ extension NavigationHost {
             let settled = search || (nav?.isNavigationBarHidden ?? true) != routeShowsBar(c, in: nav)
             // A route showing no bar has no title: its inset is the status bar's, none in landscape.
             let barless = !routeShowsBar(c, in: nav)
+            let topPeers = arrangementScrollers(in: c, top: true), bottomPeers = arrangementScrollers(in: c, top: false)
             if settled, !search, let node = c.collapseScroll, let sv = c.collapseScrollView, sv === node.scrollView, sv.adjustedContentInset.top > 0 || barless {
                 let inset = sv.adjustedContentInset.top
                 if c.insetsBarless != barless { c.insetsBarless = barless; node.scrollCollapsed = 0 }
@@ -109,7 +115,7 @@ extension NavigationHost {
                 let end = c.node.convert(c.node.bounds, to: c.contentMount).maxY + (c.contentViewport?.frame.minY ?? 0)
                 let reached = end - (c.view.bounds.maxY - safe.bottom)
                 edges = Self.routeEdges(safe: safe, document: presenter.insets, presented: presented, whole: whole, covered: covered,
-                                        collapses: c.collapseScroll != nil || !c.ridingBars.isEmpty, reached: reached)
+                                        collapses: c.collapseScroll != nil || !topPeers.isEmpty || !c.ridingBars.isEmpty, reached: reached)
                 c.bottomClearance = edges?.bottom ?? 0
             } else if case .edges(let e)? = covers[c.node.id] {
                 edges = e
@@ -121,7 +127,9 @@ extension NavigationHost {
             // widest, at rest (CSS scrollTop 0).
             // A transparent bar insets nothing of its scroller: the content
             // starts under it (`collapse`), so no `.inset` is reported there.
-            for node in [c.collapseScroll, c.edgeScroll].compactMap({ $0 }) where node.scrollView != nil && !(node === c.collapseScroll && Self.transparentBar(c.node)) {
+            var insetNodes = [c.collapseScroll, c.edgeScroll].compactMap { $0 }
+            for peer in topPeers + bottomPeers where !insetNodes.contains(where: { $0 === peer }) { insetNodes.append(peer) }
+            for node in insetNodes where wanted[node.id] != .whole && node.scrollView != nil && !(node === c.collapseScroll && Self.transparentBar(c.node)) {
                 if settled, c.viewIfLoaded?.window != nil, let safe = node.scrollView?.safeAreaInsets {
                     // The bottom edge's scroller takes the route's bottom
                     // clearance, which the route then pads nothing of
@@ -129,9 +137,18 @@ extension NavigationHost {
                     // absolutely positioned footer past. Its own safe area
                     // holds none while that padding ends it above the bars:
                     // read alone, it would leave it there for good.
-                    let reach = node === c.edgeScroll ? c.bottomClearance : 0
+                    let peerTop = topPeers.contains { $0 === node }, peerBottom = bottomPeers.contains { $0 === node }
+                    let reach = node === c.edgeScroll || peerBottom ? c.bottomClearance : 0
+                    let ownsTop = node === c.collapseScroll || peerTop
+                    #if os(iOS)
+                    if peerTop, let scroll = node.scrollView {
+                        if c.navigationItem.largeTitleDisplayMode == .always { node.scrollOrigin = max(node.scrollOrigin, scroll.adjustedContentInset.top) }
+                        else { node.scrollOrigin = scroll.adjustedContentInset.top }
+                        if node !== c.collapseScroll { node.scrollCollapsed = node.scrollOrigin }
+                    }
+                    #endif
                     // A band's part of the safe area is a UI inset over control bars, not layout.
-                    let title = node === c.collapseScroll ? node.scrollOrigin : 0
+                    let title = ownsTop ? node.scrollOrigin : 0
                     let stretched = title > 0 && node.scrollView.map { Self.stretched($0, origin: title) } == true
                     let top = max(0, max(stretched ? min(safe.top, title) : safe.top, title) - node.pageBand.top), bottom = max(0, max(safe.bottom, reach) - node.pageBand.bottom)
                     if top > 0 || bottom > 0 { wanted[node.id] = .inset(top: top, bottom: bottom) }

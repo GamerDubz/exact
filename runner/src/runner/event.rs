@@ -216,8 +216,9 @@ pub enum Event {
     /// A scroll finished (DOM's `scrollend`): the person's, its momentum
     /// included, or an animated one.
     Scrollend,
-    /// A text field's selection changed (HTML's `select`): its text, and
-    /// the selection its `InputEvent` reports.
+    /// The platform's history swipe, as the host tracks it.
+    Historyswipe(super::host_kinds::HistorySwipe),
+    /// A text field's selection changed (HTML's `select`): its text, and the selection its `InputEvent` reports.
     FieldSelect(String, super::FieldSelection),
     /// The field's selection, including a collapsed caret.
     FieldSelectionChange(String, super::FieldSelection),
@@ -584,6 +585,7 @@ impl Event {
                 .value(),
             ),
             Event::Wheel(w) => Some(w.value()),
+            Event::Historyswipe(s) => Some(s.value()),
             Event::MidiMessage(m) => Some(m.value()),
             Event::Drop(d) | Event::Dragenter(d) | Event::Dragleave(d) => Some(d.value()),
             Event::FrameNavigation(_, n) => Some(n.value()),
@@ -1101,6 +1103,7 @@ impl<D: DataSource> Runner<D> {
             Event::Close => "close",
             Event::Toggle { .. } => "toggle",
             Event::Scrollend => "scrollend",
+            Event::Historyswipe(_) => "historyswipe",
             Event::Select { .. } | Event::FieldSelect(..) => "select",
             Event::Hover(true) => "hover in",
             Event::Hover(false) => "hover out",
@@ -1192,12 +1195,16 @@ impl<D: DataSource> Runner<D> {
                     .flatten()
             })
             .ok_or(RunnerError::UnknownView(view))?;
-        // Events without a listener do nothing: a picker's `cancel`,
-        // a dialog's `close`, a scroll's end.
-        if matches!(event, Event::Cancel | Event::Close | Event::Scrollend) {
+        // Events without a listener do nothing: a picker's `cancel` (LLP
+        // 1069.010 D3), a dialog's `close`, a scroll's end, a swipe.
+        if matches!(
+            event,
+            Event::Cancel | Event::Close | Event::Scrollend | Event::Historyswipe(_)
+        ) {
             let kind = match event {
                 Event::Close => EventKind::Close,
                 Event::Scrollend => EventKind::Scrollend,
+                Event::Historyswipe(_) => EventKind::Historyswipe,
                 _ => EventKind::Cancel,
             };
             let has_handler = self
@@ -1264,6 +1271,7 @@ impl<D: DataSource> Runner<D> {
             Event::Close => (EventKind::Close, None, "close"),
             Event::Toggle { .. } => (EventKind::Toggle, None, "toggle"),
             Event::Scrollend => (EventKind::Scrollend, None, "scrollend"),
+            Event::Historyswipe(_) => (EventKind::Historyswipe, None, "historyswipe"),
             Event::Select {
                 formats,
                 mixed,

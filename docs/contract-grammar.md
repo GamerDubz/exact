@@ -104,7 +104,7 @@ typed-params  = typed-param { "," typed-param } [ "," ] ;
 typed-param   = IDENT ":" type ;
 style         = "style" IDENT block(style-line | part) ;
 decoration    = "decoration" IDENT ( style-line | block(style-line) ) ;
-atom          = "atom" IDENT style-line ;
+atom          = "atom" IDENT style-line [ block(style-line | state) ] ;
 style-line    = { FIELD "=" style-literal } NL ;
 part          = "::" "placeholder" NL block(style-line) ;
 style-literal = STRING | NUMBER | "-" NUMBER | "true" | "false" ;
@@ -150,9 +150,13 @@ and `-exact-tint-color`, and fold into the node's own rows, `:checked` under
 `:disabled`; `:active` takes `background-color`, `color`, `opacity` and
 `-exact-press-scale` and lowers to the press paint (its `opacity` an
 absolute target), `:hover` and `:focus-visible` take `background-color`,
-`border-color`, `opacity` and `box-shadow`; a host state's row is a literal
-(`lower-state-literal`; a token's name is one). Another row is `lower-state-row`;
-a part on a native control, a list's row, or (for `:active`, `:hover` and
+`border-color`, `opacity` and `box-shadow`. Active targets may compute or clear
+with `none`; hover and focus targets are literals (`lower-state-literal`; a
+token's name is one). Another row is `lower-state-row`;
+native buttons and list rows accept `:active` and keep their other native states.
+A host rejects properties its projected native component cannot express, names
+them in the journal and keeps the native component.
+A part on another native control, or (for `:active`, `:hover` and
 `:focus-visible`) a run inside a paragraph is `lower-state-target`. An `:active`
 row beside the same paint's `-exact-press-` row is `lower-state-press-paint`.
 The node's block wins over its class's, row by row.
@@ -281,6 +285,7 @@ member        = "state" IDENT [ ":" type ] "=" expr [ "persist" ] NL
               | resource | mutation | action | task | sequence ;
 provider      = FIELD [ "=" expr ] NL ;
 resource      = "resource" IDENT "=" source-call
+                [ "for" IDENT "in" expr [ "key" "=" expr ] ]
                 [ "with" expr { "," expr } ] "as" "shape" type
                 [ "else" source-call ] NL ;
 mutation      = "mutation" IDENT "as" "shape" type [ "queue" ]
@@ -514,6 +519,20 @@ after its call arguments and before `as shape`. The source receives both lists
 in order; a change to either asks again. Only admission of an eligible persisted
 answer at boot compares the call arguments alone. An empty call
 is valid; an empty `with` is not. `else` keeps its place after the shape.
+
+A resource over a list, `resource r = source(x) for x in list as shape S`,
+asks its source once for each element. Each request is keyed as a `for` row is: by `key=`, or, without
+it, by the element, which must then be a string, number or bool
+(`type-resource-for-key`). The arguments and the key read the element. An
+element that joins starts its request, one that leaves lets only its own
+request go, and the others go on. `r` reads as `S[]` in the list's order,
+each element its shape's zero until its answer; an element whose key
+repeats an earlier one's reads that one's answer. `pending(r)` and
+`failed(r)` are true when any element's request is pending or has failed,
+and `failure(r)` is the first failure. It takes no `with` or `else`
+(`syntax-resource-for-with`, `syntax-resource-for-else`), and asks a data
+source, not one the runner answers (`lower-resource-for-source`). A
+mutation's `refreshes r` asks every element again.
 
 A resource's `else` is a placeholder. `else empty()` is the resource type's zero,
 with `field=constant` overrides for a record. `else source(values…)` names a source
@@ -1355,6 +1374,12 @@ Markdown; `none` is the
 default. It is not CSS: CSS has nothing for this. The value stays the Markdown
 source, so storage, search and export are the string.
 
+The web build prepares literal reader strings and text available from initial
+data answers. Prepared pieces keep their source identity; new or changed content
+loads the Markdown parser on demand, as do inline-atom bindings. Fonts and line
+wrapping follow the reader's platform and viewport at runtime. Preparing readers
+makes no network requests.
+
 - `text note.body markup="markdown"` is the reader: headings, lists, quotes,
   code and links painted as one node, on every host.
 - `textarea id="editor" value=draft input=edit markup="markdown"` is the editor:
@@ -1451,9 +1476,32 @@ component Composer
   space; or `prefix="@"`, one of the characters at the start of a word, then a
   bare run or a `"…"` string, followed by white space. A relative link and a
   prefix token are atoms only when a face names their source; a scheme link
-  always is. It may take `role="link"` (a button by default) and `color` and
-  `background-color`; the pill's other metrics are the platform's
-  (`lower-atom-style`). It is scoped and imported as `style` is.
+  always is. It may take `role="link"` (a button by default) and its style,
+  CSS's rows on its line or in an indented block under it: `color`,
+  `background-color`, `border-color`, `border-radius` (one length in px),
+  `outline` (a width, `solid` and a colour, or `none`), `outline-offset` (px,
+  negative inside the pill) and `text-decoration-line` (`underline`, the
+  label's), each also in a `:hover` block (the pointer over the pill) and a
+  `:checked` block (the selection exactly the atom, as a press leaves it); and
+  on its own, `padding-inline` (px or em, both sides), `-exact-icon-size` (px or
+  em, the icon's side; unsaid, the cap height), `gap` (px or em, between the icon
+  and the label; unsaid, a quarter em) and `border` (`1px solid <colour>`, or
+  `border-width` with `border-style="solid"`). The icon is centred on half the cap
+  height above the baseline. Unsaid, each is the
+  platform's token's. A pill keeps its line's height: its border's top and
+  bottom are drawn inside it, and a ring takes no room (on Apple one that would
+  reach past the pill is cut at its edge). Anything else is `lower-atom-style`.
+  It is scoped and imported as `style` is.
+
+  ```text
+  atom mention prefix="@" padding-inline="0" border-radius="4px"
+    :hover
+      text-decoration-line="underline"
+    :checked
+      outline="2px solid light-dark(#2563eb, #60a5fa)"
+      outline-offset="-2px"
+      border-radius="6px"
+  ```
 - `atoms="a b"` on a `text` or `textarea` with `markup="markdown"` lists the
   kinds it recognizes (`lower-atom-field`, `lower-atom-unknown`); two kinds with
   one scheme, a shared prefix character, or both relative are refused
@@ -1461,8 +1509,10 @@ component Composer
 - `atomFaces` takes `AtomFace(source, label, icon, title, color,
   backgroundColor, direction, ariaLabel)` records, keyed by an atom's whole source: equal
   source is one atom, and new text is a new key. An empty label is a link's text
-  or a token without its prefix and quotes; the icon is an image source (the web
-  draws a URL or asset, not yet a `symbol:`). `color` and `backgroundColor`
+  or a token without its prefix and quotes; the icon is an image source, drawn
+  in its own colours (an asset, an `app:/` file, a `data:` or http(s) URL; of
+  the symbols, Apple draws `symbol:sf/<name>` in the pill's ink and the web
+  none). `color` and `backgroundColor`
   paint that atom over its kind's `color` and `background-color`, or are empty
   for the kind's. Each is a colour as a bound `color` takes one: `light-dark()`,
   a theme entry's name, a role, a `-exact-platform-color()` only as one of the
@@ -1497,9 +1547,9 @@ component Composer
   KB of text, or 16 KB in 256 runs or more, a Markdown text being one run per
   piece.
 
-The web, macOS and iOS draw atoms in the editor and the reader (on Apple an
-icon draws only for `symbol:sf/<name>`, and UIKit's smart delete takes one of
-the two spaces an atom's deletion leaves). VoiceOver on macOS and iOS reads
+The web, macOS and iOS draw atoms in the editor and the reader (on Apple the
+reader's pill draws no icon, border, ring or `:hover` paint, and UIKit's smart
+delete takes one of the two spaces an atom's deletion leaves). VoiceOver on macOS and iOS reads
 an atom's label in place and its role only from its own element, which the
 next-item command passes over on macOS and reaches after the field on iOS. Linux, Windows and Android show the source in the
 editor and the link text in the reader, with no `atompress`. The driver's
@@ -1613,6 +1663,7 @@ host.
 | Special: zero or one location string, no captured args | `navigate` |
 | Zero or one `PointerEvent` (the action takes it or leaves it) | `pointerdown`, `pointerup`, `pointermove`, `contextmenu` (UI Events makes it one: where the secondary click or long press was; a keyboard's menu key targets the focus) |
 | Zero or one `WheelEvent` (the action takes it or leaves it) | `wheel` |
+| Zero or one `HistorySwipeEvent` (the action takes it or leaves it) | `historyswipe`, on the navigation root |
 | Zero or one `DragEvent` (the action takes it or leaves it) | `drop`, `dragenter`, `dragleave` |
 | Zero or one `ClipboardEvent` (the action takes it or leaves it) | `copy`, `cut`, `paste` ([clipboard](#clipboard)) |
 | Zero or one `FocusEvent` (the action takes it or leaves it) | `focusin`, `focusout`: `target` is the focused element's `id` (or `""`); `relatedTarget` is `some(id)` for the other element or `none` |
@@ -1765,7 +1816,26 @@ The compiler validates arity and
 available payload types; tags and hosts constrain where events make sense.
 `navigate` belongs on the first root element, outside any region, which must
 also carry `navigationKey` (the navigation root; its `navigationBack`, naming the
-Back control, is optional). Transform geometry/release
+Back control, is optional). `historyswipe` belongs there too: on macOS it
+hears the two-finger swipe back or forward as AppKit tracks it, so an app can
+draw its own sign of the swipe (an arrow at the window's edge) while the step
+stays the platform's
+D5.5). Its `HistorySwipeEvent` has `phase` (`"began"`, `"changed"`, then
+`"ended"` just before the step or `"cancelled"` when the lift goes nowhere),
+`direction` (`"back"` or `"forward"`, the way the swipe set out), `amount`,
+AppKit's `gestureAmount` along that way (0 at rest, 1 a whole page; a slow lift
+steps from about 0.25 on macOS 27, a quick one from less), and `clientX` and
+`clientY`, where the pointer was as the swipe began. The swipe follows
+System Settings › Trackpad › Swipe between pages, so with it off nothing comes.
+The web's browser draws its own arrow and tells the page nothing, so the web,
+iOS, Linux and Windows send none. The root's `navigationHistory` says which
+ways through history it offers now: `"back forward"`, the default, offers each
+wherever the router has somewhere to go, and `"back"`, `"forward"` or `"none"`
+withholds the rest. Bind it when the app's own Back and Forward go less far
+than its router's visits (a palette open over the page, a history capped at so
+many visits). On macOS a way withheld is no swipe AppKit tracks, so no
+`historyswipe` either, and no Go ▸ Back or Forward or mouse side button; the
+web's history is the browser's, and the other hosts ignore it. Transform geometry/release
 bindings are required as a pair. See
 [`handler_arity`](../contract/analyze/src/lib.rs) and the corresponding corpus/tests.
 
@@ -2137,9 +2207,14 @@ drags or double-clicks keeps what it selected.
 On **web (JS and wasm), macOS, iOS and Linux**, `setRangeText(id, text)` replaces the
 current selection; `setRangeText(id, text, start, end[, selectionMode])`
 replaces the given UTF-16 range. `selectionMode` is `preserve` by default,
-or `select`, `start`, `end`, following HTML. It does not focus the field,
-apply `maxlength`, or create an undo step. Apple clears the edited field's
-existing undo history when its value changes. Invalid ranges, modes, unsupported
+or `select`, `start`, `end`, following HTML. It does not focus the field or
+apply `maxlength`. On macOS it is one undo step that restores the text before
+it, as on the Markdown editor, wherever the field has an editor (a textarea, or
+an input being edited); without one, or while an input method composes, the
+value is written as the app's own is. On iOS it is no undo step. Both Apple
+hosts clear the edited field's undo history when a value is written. On the web
+it is HTML's, which Chrome makes no undo step, and Linux keeps no field undo
+history. Invalid ranges, modes, unsupported
 input types and missing ids log a refusal without editing. On the Markdown
 editor (web, macOS and iOS) the offsets are the source's and each call is one
 undo step ([Markdown](#markdown-markup-format-select)); Linux refuses it there.
@@ -2457,15 +2532,13 @@ the virtual clock).
 
   View holds Actual Size ⌘0, Zoom In ⌘+ (⌘= too) and Zoom Out ⌘-, as Safari's
   and Preview's View does, stepping through Safari's zoom levels (50% to 300%)
-  for the main window (the key one, or the one under a key panel). The zoom
-  multiplies the root font size last, over the
-  app's own `setRootFontSize` as a browser's page zoom is over
-  `html { font-size }`, so every `rem` and inherited text size grows; it is
-  per window and not kept across a launch. Declared deviation: a browser's
-  zoom scales `px` lengths too, and this one leaves them, as it leaves the
-  platform's own controls at their size; an app that sizes in `px` alone
-  removes the three items (`actual-size zoom-in zoom-out`). An app's own ⌘0,
-  ⌘= or ⌘- command takes the host item's place.
+  for the main window (the key one, or the one under a key panel). It is a
+  page zoom, as a browser's: a CSS px is the factor's points, so the viewport
+  the page lays out in shrinks (media queries and `resize` see it) and `px`,
+  `rem` and the controls in the page all scale, drawn at the display's scale
+  times the factor. It is per window and not kept across a launch. An app's
+  own ⌘0, ⌘= or ⌘- command takes the host item's place and sets its own steps
+  with `setPageZoom(factor)`.
 
   A held ⌘Q, as Chrome's Warn Before Quitting asks for: a root `key` handler
   that calls `preventDefault()` on ⌘Q (match `code == "KeyQ"`: under a
@@ -2501,6 +2574,11 @@ box and a radio group are passed over. On, Tab reaches every control, including
 each inline link or pressable text run inside a paragraph, including in a dialog.
 Return activates a focused inline link before a dialog's default button. Space
 activates a pressable run only when it has no `href`; it never follows a link.
+Return presses no other focused button on the Mac: it belongs to a dialog's default
+button, as in AppKit. An app that copies a web app's keys writes
+`-exact-return-presses="descendants"` on a container: under it Return presses the focused
+button as Space does, before a dialog's default button, as Chromium presses a focused
+`<button>` on Enter. The web does that already, and other hosts ignore the property.
 A `tabindex` you write wins either way: `0` or more is always a stop, a negative one never. A button that
 `focus(id)` or `autofocus` reached while it is no stop still goes on to the next stop
 with Tab, and back to the one before with Shift-Tab. Under the agent the setting is the
@@ -2535,10 +2613,10 @@ rows and content lifted into a popover; an explicit
 The current command name inventory is:
 
 `blur`, `copyText`, `deliveryActivate`, `deliveryCheck`, `fastSeek`, `focus`, `format`,
-`load`, `openURL`, `requestFullscreen`, `requestPictureInPicture`, `exitPictureInPicture`, `removeAllRanges`, `selectText`, `setSelectionRange`, `setRangeText`, `setScheme`, `setRootFontSize`, `showPicker`, `share`, `saveFile`,
+`load`, `openURL`, `requestFullscreen`, `exitFullscreen`, `requestPictureInPicture`, `exitPictureInPicture`, `removeAllRanges`, `selectText`, `setSelectionRange`, `setRangeText`, `setScheme`, `setRootFontSize`, `setPageZoom`, `setWindowOpacity`, `showPicker`, `share`, `saveFile`,
 `showOpenFilePicker`, `showDirectoryPicker`, `showSaveFilePicker`, `requestPermission`, `scrollIntoView`, `scrollBy`, `showModal`,
 `haptic`, `postMessage`, `reload`, `relaunch`, `close`,
-`playSound`, `playSounds`, `stopSounds`, `requestMIDIAccess`, `sendMIDI`, `startTrace_EXPERIMENTAL`, `stopTrace_EXPERIMENTAL`
+`observe`, `observeAttributes`, `observeError`, `playSound`, `playSounds`, `stopSounds`, `requestMIDIAccess`, `sendMIDI`, `startTrace_EXPERIMENTAL`, `stopTrace_EXPERIMENTAL`
 ([pointer](#pointer): a window's `beforeunload`), `preventDefault` ([keys](#keys)) and
 `stopPropagation` ([events](#events)).
 
@@ -2548,19 +2626,22 @@ argument validation. Use the working implementation when selecting arguments:
 
 | Operation | Starting point |
 | --- | --- |
-| `postMessage(text, target)`: ordered messages to a canvas by literal surface name, or string replies and host updates to a live iframe by `id` on Apple and both web executors; iframe targets may compute. Missing, ambiguous, replaced or navigation-revoked iframe targets are dropped without entering the canvas queue. | [iframe fixture](../scripts/fixtures/iframe-post-messages.contract), [compiler tests](../contract/cli/tests/it/post_message.rs) |
-| `navigate(id, url)`, `traverseHistory(id, delta)`, `reload(id)` or `reload(id, ignoreCache=true)`, `stopLoading(id)`: move the mounted `iframe` with that `id`, by the Navigation API's and WebDriver BiDi's names; bare `reload()` stays the development host's reboot. The frame reports with `navigate=`, `currententrychange=`, `navigatesuccess=` and `navigateerror=`, each with a `FrameNavigation` record as the action's optional last parameter. On Apple a frame with `partition=` is a top-level page in that partition's own storage (`persist:` names last across launches) and takes them all; an unpartitioned frame refuses the commands (`navigateerror`, `NotSupportedError`). The web honours no `partition` (`exactPage().iframePartition` is false) and gives a same-origin frame what the browser lets a page see. A literal id no `iframe` carries is refused here; `partition` beside `sandbox` (`lower-iframe-partition-sandbox`), beside `message=` or a `postMessage` to it (`lower-iframe-partition-message`), or with a literal `src` that is not a web page (`lower-iframe-partition-src`) is refused. A partition is cleared with `clearSiteData` from `@exact/browser`: `send m = clearSiteData(partition=…, types=[…])`, or from data code `await clearSiteData({ partition, types })` once the Contract names the send. On Apple any frame that handles `newwindow=` asks for windows, with a `FrameNewWindow`: a `new-window` (`window.open` with features) has already opened as the platform's popup in the same partition, a `foreground-tab` or `background-tab` (`target=_blank`, ⌘-click) opened nothing and is the app's; `download=` reports a download with a `FrameDownload`. Dialogs, file inputs, a download's destination and another app's scheme are the platform's sheets and panels, and `requests` under the agent (`dialog`, `open-file`, `save-file`). `captureScreenshot(id, "app:/tmp/shot.png")` writes a PNG of any frame's guest, and `clip=DOMRect(x=…, y=…, width=…, height=…)` a part of it in the guest's CSS pixels, as a pinch or pan leaves it; the frame answers with `capture=` and a `FrameCapture` (`path`, `width`, `height`, or `error` and `message`); a literal path outside `app:/data`, `app:/cache` and `app:/tmp` is refused here (`lower-frame-capture-path`); the web answers `NotSupportedError`. On Apple an unpartitioned, unsandboxed frame of a local PDF (`app:/` or `assets/`) shows it in PDFKit's `PDFView`, `#page=N` opening at that page. Data code that holds the grant `browser.automation` drives a partitioned frame with `@exact/browser-automation` (WebDriver BiDi's `evaluate`, `callFunction`, `addPreloadScript`, `performActions`, `handleUserPrompt`, `setDownloadBehavior`, `captureScreenshot`); while it drives one, the frame's dialogs fire `userpromptopened=` with a `FrameUserPrompt` instead of showing a sheet, until a person's input takes the frame back. `openDevTools(id)` opens the platform's inspector for a frame's guest, as Electron's `<webview>.openDevTools()`: on macOS Safari's Web Inspector in a window of its own (brought to the front when open), through WebKit's private `_inspector`; iOS makes the frame inspectable from a Mac's Safari › Develop; the web refuses it in the log | [fixture](../scripts/fixtures/iframe-partition.contract), [windows](../scripts/fixtures/iframe-windows.contract) |
+| `observe(name)`, `observe(name, Attributes(...), severity)`, `observeAttributes(Attributes(...))`, `observeError(message)` or `observeError(message, type)`: optional Observe events, attributes merged into later events, and error reports. Attributes use a shape constructor. Event names contain 1–256 characters and do not start with `expo.`; severity recognizes `trace`, `debug`, `info`, `warn`, `error` and `fatal`, defaulting to `info`. Declare the `observe` launch module and its project configuration to dispatch them. | [Observe configuration](../modules/observe/README.md), [compiler tests](../contract/cli/tests/it/observe_commands.rs) |
+| `postMessage(text, target)`: ordered messages to a canvas by literal surface name, or string replies and host updates to a live iframe by `id` on Apple and both web executors; iframe targets may compute. Missing, ambiguous, replaced or navigation-revoked iframe targets are dropped without entering the canvas queue. |, [iframe fixture](../scripts/fixtures/iframe-post-messages.contract), [compiler tests](../contract/cli/tests/it/post_message.rs) |
+| `navigate(id, url)`, `traverseHistory(id, delta)`, `reload(id)` or `reload(id, ignoreCache=true)`, `stopLoading(id)`: move the mounted `iframe` with that `id`, by the Navigation API's and WebDriver BiDi's names; bare `reload()` stays the development host's reboot. The frame reports with `navigate=`, `currententrychange=`, `navigatesuccess=` and `navigateerror=`, each with a `FrameNavigation` record as the action's optional last parameter. On Apple a frame with `partition=` is a top-level page in that partition's own storage (`persist:` names last across launches) and takes them all; an unpartitioned frame refuses the commands (`navigateerror`, `NotSupportedError`). The web honours no `partition` (`exactPage().iframePartition` is false) and gives a same-origin frame what the browser lets a page see. A literal id no `iframe` carries is refused here; `partition` beside `sandbox` (`lower-iframe-partition-sandbox`), beside `message=` or a `postMessage` to it (`lower-iframe-partition-message`), or with a literal `src` that is not a web page (`lower-iframe-partition-src`) is refused. A partition is cleared with `clearSiteData` from `@exact/browser`: `send m = clearSiteData(partition=…, types=[…])`, or from data code `await clearSiteData({ partition, types })` once the Contract names the send. On Apple any frame that handles `newwindow=` asks for windows, with a `FrameNewWindow`: a `new-window` (`window.open` with features) from a partitioned frame has already opened as the platform's popup in the same partition; a `foreground-tab` or `background-tab` (`target=_blank`, ⌘-click), or a `new-window` from an unpartitioned frame (part of the app's page), opened nothing and is the app's; `download=` reports a download with a `FrameDownload`. Dialogs, file inputs, a download's destination and another app's scheme are the platform's sheets and panels, and `requests` under the agent (`dialog`, `open-file`, `save-file`). A guest's `window.print()` prints its own frame (a PDF frame the PDF's pages): on macOS the print panel, a sheet on the window, and the `print` request under the agent, for a web view's main frame or a PDF in a frame below it (another frame below it does not print: no public API prints it); the web prints as the browser does; iOS does not print yet. `captureScreenshot(id, "app:/tmp/shot.png")` writes a PNG of any frame's guest, and `clip=DOMRect(x=…, y=…, width=…, height=…)` a part of it in the guest's CSS pixels, as a pinch or pan leaves it; the frame answers with `capture=` and a `FrameCapture` (`path`, `width`, `height`, or `error` and `message`); a literal path outside `app:/data`, `app:/cache` and `app:/tmp` is refused here (`lower-frame-capture-path`); the web answers `NotSupportedError`. On Apple an unpartitioned, unsandboxed frame of a local PDF (`app:/` or `assets/`) shows it in PDFKit's `PDFView`, `#page=N` opening at that page. Data code that holds the grant `browser.automation` drives a partitioned frame with `@exact/browser-automation` (WebDriver BiDi's `evaluate`, `callFunction`, `addPreloadScript`, `performActions`, `handleUserPrompt`, `setDownloadBehavior`, `captureScreenshot`); while it drives one, the frame's dialogs fire `userpromptopened=` with a `FrameUserPrompt` instead of showing a sheet, until a person's input takes the frame back. `openDevTools(id)` opens the platform's inspector for a frame's guest, as Electron's `<webview>.openDevTools()`: on macOS Safari's Web Inspector in a window of its own (brought to the front when open), through WebKit's private `_inspector`; iOS makes the frame inspectable from a Mac's Safari › Develop; the web refuses it in the log |, [fixture](../scripts/fixtures/iframe-partition.contract), [windows](../scripts/fixtures/iframe-windows.contract) |
 | `focus(id)` | [Markdown Stress](../apps/markdown-stress/app.contract) |
 | `format(id, command[, argument])`: a Markdown editor's toolbar command ([Markdown](#markdown-markup-format-select)) | [Markdown Stress](../apps/markdown-stress/app.contract) |
 | `blur()`, `blur(id)` | [Messages](../apps/messages/app.contract), [keyboard-bar corpus](../contract/corpus/keyboard-bar.contract) |
 | `selectText(...)` | No app fixture; the hosts' field selection, such as [`FieldSelections.swift`](../host/apple/Sources/ExactKit/FieldSelections.swift) |
 | `setSelectionRange(id, start, end[, direction])`: a text field's or text's selection, by its `id` ([form controls](#form-controls-radio-inputevent-setselectionrange)) | [radios conformance](../host/web-js/conformance/radios.contract), [control tests](../contract/cli/tests/it/controls.rs) |
-| `setRangeText(id, text[, start, end[, selectionMode]])`: a field's range replacement, one `input`, preserve selection by default; no undo step on a plain field, one on the Markdown editor ([form controls](#form-controls-radio-inputevent-setselectionrange)) | [Chrome comparison](../host/web/tests/field-range.test.mjs) |
+| `setRangeText(id, text[, start, end[, selectionMode]])`: a field's range replacement, one `input`, preserve selection by default; one undo step on macOS and on the Markdown editor, none on a plain field elsewhere ([form controls](#form-controls-radio-inputevent-setselectionrange)) | [Chrome comparison](../host/web/tests/field-range.test.mjs) |
 | `copyText(text)` | [Messages](../apps/messages/app.contract) |
-| `startTrace_EXPERIMENTAL()`, `stopTrace_EXPERIMENTAL()`: experimental, so named while the trace's fields may still change; a recording of each display-link callback, from which it estimates the frames the display showed again, from an app's own control and in any build, a production one included; `stopTrace_EXPERIMENTAL()` puts the trace on the clipboard as compact JSON and in a `trace-recording-*.json` file in the app's temporary directory; `stopTrace_EXPERIMENTAL(maxBytes)` copies it cut to that many bytes (its totals and scroll segments as rows, then the frames late the longest first, as many as fit), for a conversation that limits a message (a budget too small for its totals gets a note naming the size that fits them), and still saves the whole trace. On iOS it splits each scroll a person makes of an element's scroller, a route's page or the document into its drag and its glide, with an estimate, from the display link's callbacks, of the hitch time ratio Apple's scroll metrics report; a Mac recording follows no scroller. It lists each late frame with the main thread's busy time, overrun, batches and host phases. Apple hosts (tvOS, with no clipboard, only saves the file); the web and Linux refuse it in the journal | [`TraceRecording.swift`](../host/apple/Sources/ExactKit/TraceRecording.swift) |
-| `openURL(url)`: an absolute `http`, `https`, `mailto` or `tel` URL, or one of a scheme app.json's `open_url.schemes` declares (`"open_url": {"schemes": ["vscode", "zed"]}`, an editor's deep link), opened by whatever the system registered for it; the web's JS target, macOS and iOS open declared schemes (a browser asks first) and journal one nothing could open, and under the agent journal them instead (`openURL vscode: …`). A link's `href` of a declared scheme opens on macOS and iOS, which hand followed links to `openURL`; the web writes no such `href` (its link policy keeps the four schemes). `file`, `javascript`, `data` and the other schemes that run or read content cannot be declared. Any other scheme is refused in the journal | No Contract fixture; the hosts' dispatch, such as [`host/web-js/commands.js`](../host/web-js/commands.js), [`OpenURL.swift`](../host/apple/Sources/ExactKit/OpenURL.swift) |
+| `startTrace_EXPERIMENTAL()`, `stopTrace_EXPERIMENTAL()`: experimental, so named while the trace's fields may still change; a recording of each UI update UIKit makes, observed without asking for one or for a frame rate (iOS and tvOS 18 and later), elsewhere of each display-link callback, from which it estimates the frames the display showed again, from an app's own control and in any build, a production one included; `stopTrace_EXPERIMENTAL()` puts the trace on the clipboard as compact JSON and in a `trace-recording-*.json` file in the app's temporary directory; `stopTrace_EXPERIMENTAL(maxBytes)` copies it cut to that many bytes (its totals and scroll segments as rows, then the frames late the longest first, as many as fit), for a conversation that limits a message (a budget too small for its totals gets a note naming the size that fits them; that note can exceed the requested budget), and still saves the whole trace. On iOS it splits each scroll a person makes of an element's scroller, a route's page or the document into its drag and its glide, with its frame rate and delay relative to the display’s fastest rate; a Mac recording follows no scroller. It lists each late frame with its cause, its scroll offset, its update's phases, the main thread's busy time, its overrun and commit time, batches and host phases; [Frame trace fields](#frame-trace-fields) says what each field means. Apple hosts (tvOS, with no clipboard, only saves the file); the web and Linux refuse it in the journal | [`TraceRecording.swift`](../host/apple/Sources/ExactKit/TraceRecording.swift) |
+| `openURL(url)`: an absolute `http`, `https`, `mailto` or `tel` URL, or one of a scheme app.json's `open_url.schemes` declares (`"open_url": {"schemes": ["vscode", "zed"]}`, an editor's deep link), opened by whatever the system registered for it; the web's JS target, macOS and iOS open declared schemes (a browser asks first) and journal one nothing could open, and under the agent journal them instead (`openURL vscode: …`). `openURL(url, id)` also says whether it opened, as Electron's `shell.openExternal` does: `change` at the element `id` names hears `opened` when the system took the URL, or `failed` when it was refused or nothing could open it (no app registered for its scheme, a host with no browser). The web hears `opened` for any URL it hands the browser, which does not say what opened it. Where the agent's drive journals an open instead, macOS answers whether an app is registered for the URL and the other hosts answer `opened` A link's `href` of a declared scheme opens on macOS and iOS, which hand followed links to `openURL`; the web writes no such `href` (its link policy keeps the four schemes). `file`, `javascript`, `data` and the other schemes that run or read content cannot be declared. Any other scheme is refused in the journal | No Contract fixture; the hosts' dispatch, such as [`host/web-js/commands.js`](../host/web-js/commands.js), [`OpenURL.swift`](../host/apple/Sources/ExactKit/OpenURL.swift) |
 | `setScheme(scheme)`: the app's scheme, `"light"`, `"dark"` or `"system"` (follow the system's appearance) | [Caltrain](../apps/caltrain/app.contract), [Markdown](../apps/markdown/app.contract) |
-| `setRootFontSize(px)`, `setRootFontSize("125%")`, `setRootFontSize("medium")`: CSS's `:root { font-size }`, the root font size every `rem` follows, in px above 0, laid out in the action's own commit; `px` lengths stay. It stands over the host's own size (the browser's setting, iOS Dynamic Type, 16 on macOS and Linux), as an author's `html { font-size: 20px }` stands over a browser's font-size setting, and `"medium"` hands the size back to the host. The Mac's View ▸ Zoom In multiplies whichever size stands ([The Mac's menu bar](#keys)). A percentage (CSS's number syntax, above 0) is that share of the host's size and follows it as the host's changes. A literal of 0 or less is refused here, a computed one in the log when it runs. Not kept across a launch: set it again from a mount task | [rem tests](../contract/cli/tests/it/rem.rs) |
+| `setRootFontSize(px)`, `setRootFontSize("125%")`, `setRootFontSize("medium")`: CSS's `:root { font-size }`, the root font size every `rem` follows, in px above 0, laid out in the action's own commit; `px` lengths stay. It stands over the host's own size (the browser's setting, iOS Dynamic Type, 16 on macOS and Linux), as an author's `html { font-size: 20px }` stands over a browser's font-size setting, and `"medium"` hands the size back to the host. A percentage (CSS's number syntax, above 0) is that share of the host's size and follows it as the host's changes. A literal of 0 or less is refused here, a computed one in the log when it runs. Not kept across a launch: set it again from a mount task | [rem tests](../contract/cli/tests/it/rem.rs) |
+| `setPageZoom(factor)`: the window's page zoom, as View ▸ Zoom In sets it and Electron's `webContents.setZoomFactor`: a CSS px is `factor` points, so the viewport, media queries, `px` and `rem` all follow; `setPageZoom(1)` is Actual Size, and a factor is clamped to 0.25–5. For an app whose own ⌘0, ⌘= and ⌘- commands keep their own steps ([The Mac's menu bar](#keys)). The Mac's; iOS, Linux, Windows and the web refuse it in the journal | [`PageZoomMacTests`](../host/apple/tests/ExactKitTests/PageZoomMacTests.swift) |
+| `exitFullscreen()`, `setWindowOpacity(opacity)`: what a quit the app holds does to its window before it quits, as Electron's `setFullScreen(false)` and `setOpacity(0)`. `exitFullscreen()` is the web's `document.exitFullscreen()`: on the Mac the session's window leaves its full-screen space (a video's own full screen is `requestFullscreen(id)`'s); nothing happens when nothing is full screen. `setWindowOpacity` draws the session's window at an opacity from 0 (unseen, still key and still hearing keys) to 1 (`NSWindow.alphaValue`); a literal outside 0–1 is refused here (`type-window-opacity`). The Mac's; the web refuses `setWindowOpacity`, and iOS and Linux refuse both, in the journal. The agent's `state.windows` shows each window's `fullScreen` and `opacity` | [calls tests](../contract/cli/tests/it/calls.rs), [`WindowCommandsMacTests`](../host/apple/tests/ExactKitTests/WindowCommandsMacTests.swift) |
 | `share(title=, text=, url=, files=)`: the system share sheet by the Web Share API's names, at least one of `text`, `url` and `files`, each its own item of the sheet (pass a picture alone to share only it, as a Share Card button does; `contract vocab share`); `url` absolute `http(s)`. `files=` lists `app:/` files, each behind the app's `fs.read` grant (on Apple a regular file of at most 64 MB, reached through no symbolic link), and `"#id"` entries: a PNG of that element as it is drawn now, at the display's scale, named by the share's `title` (else by the id) (iOS and macOS; the web refuses it, `share: refused: a picture of an element is not available on the web`; Android and Linux refuse files). A literal `#id` no element carries is refused here (`lower-share-picture`), a missing one at run time in the journal. Offer it where `exactPage()`'s `canShareFiles` and `canSharePictures` hold. The outcome is a journal line | [share corpus](../contract/corpus/share.contract), [Metronome](../apps/metronome/app.contract) |
 | `showPicker(id)`, export `saveFile(id, from, suggestedName)`: the host copies the `app:/` file `from` to where the person chooses; `change` at `id` carries the chosen name, `cancel` a dismissal. `saveFile(id, text=…, suggestedName=…)` saves the text itself (UTF-8), no file written first and no grant, so "export what's on screen" is one press | [picker tests](../contract/cli/tests/it/picker.rs), [Fieldnotes](../apps/fieldnotes/app.contract), [Linux's save tests](../host/linux/src/presenter/save_tests.rs) |
 | `showOpenFilePicker(id[, multiple])` | [file-picker corpus](../contract/corpus/file-pickers.contract) |
@@ -2572,7 +2653,7 @@ argument validation. Use the working implementation when selecting arguments:
 | `showPopover(id, source="trigger")`, `hidePopover(id)`, `togglePopover(id, source="trigger")`: HTML's methods by element id. `popover=(expanded ? some("manual") : none)` adds or removes that property on the same node; removing it closes the top layer and restores inline placement. `source=` is optional and explicit; it need not carry `popovertarget`, and the key handler's node is not inferred. Repeated show/hide is a no-op. Visibility changes immediately in command order, including hide then show during native dismissal. Bad targets or sources are refused in the journal. A popover's `toggle=changed` action may take `e: ToggleEvent`, with `oldState` and `newState` (`"open"` or `"closed"`); events follow logical visibility, coalescing changes in one turn. Without a source the popover has no invoker. A following `focus(id)` in the opening action selects a native menu row on macOS and windowed Linux; AppKit refuses changing the highlight once native tracking begins. UIKit navigation-bar menus still lack command dismissal and toggle observation (issue #319 remaining work). Desktop/headless Linux reports unsupported; windowed Linux uses its existing supported menu/alert shapes. | [menu tests](../contract/cli/tests/it/menus.rs) |
 | `showModal(id)`, `close(id)`: `HTMLDialogElement.showModal()` and `close()` on a dialog by its `id`, from an action (bare `close()` is the window's). The terminal takes them; iOS presents a `dialog` or `role="alertdialog"` popover by its id as its confirmation (an alert or action sheet, with no invoker) and any other `dialog` as a sheet as tall as its content, the web shows the dialog (or the alertdialog popover), macOS the dialog in its top layer, or a `role="alertdialog"` one in the alert's shape as `NSAlert`, a sheet on the window | [the harness](../apps/harness/terminal.contract), [the native fixture](../apps/native-fixture/app.contract) (`askClear`) |
 | `fastSeek(id, seconds)`, `load(id)`: a `video` or `audio`, by HTML's method names. `fastSeek` seeks each time it runs, where a bound `currentTime` seeks only when its value changes; every host seeks to the exact time, which HTML's approximate-for-speed allows. `load` loads the source again, as a changed `src` does: the bound `currentTime` waits for its metadata and a bound `paused` false plays | [media tests](../contract/cli/tests/it/media.rs), [media conformance plan](../host/web-js/conformance/media.contract) |
-| `requestPictureInPicture(id)`, `exitPictureInPicture()`: the `image` with that `id` floats in the platform's picture-in-picture window, which shows each picture its `src` names next, live (HTML has it only on `video`; this stands for the canvas `captureStream()` and hidden video a page builds). The image hears `enterpictureinpicture`, `leavepictureinpicture` (the person closed the window, or `exitPictureInPicture()`), and `pictureinpictureerror` with the reason when the request fails, as HTML's promise rejects; an image that leaves the document closes it with no event. One image floats at a time, so `exitPictureInPicture()` takes no id, as HTML's `document.exitPictureInPicture()`. macOS (AVKit's sample-buffer source) and the web's JS target (`captureStream()` into `requestPictureInPicture()`) float it; iOS, tvOS, the wasm target, Linux and Windows refuse it in the journal and with the event | [compiler tests](../contract/cli/tests/it/picture_in_picture.rs), [web test](../host/web-js/picture-in-picture.test.mjs) |
+| `requestPictureInPicture(id)`, `exitPictureInPicture()`: the `image` with that `id` floats in the platform's picture-in-picture window, which shows each picture its `src` names next, live (HTML has it only on `video`; this stands for the canvas `captureStream()` and hidden video a page builds). The image hears `enterpictureinpicture`, `leavepictureinpicture` (the person closed the window, or `exitPictureInPicture()`), and `pictureinpictureerror` with the reason when the request fails, as HTML's promise rejects; an image that leaves the document closes it with no event. One image floats in that window at a time, so `exitPictureInPicture()` takes no id, as HTML's `document.exitPictureInPicture()`. macOS (AVKit's sample-buffer source) and the web's JS target (`captureStream()` into `requestPictureInPicture()`) float it; iOS, tvOS, the wasm target, Linux and Windows refuse it in the journal and with the event. `requestPictureInPicture(id, presentation="window", title=…, width=…, height=…)` asks for a window Exact draws instead, by name as `scrollIntoView` takes its options: `"window"` a browser's picture-in-picture window as Chromium draws it on the Mac (bottom right, its title, Minimize, Back to tab and Close shown while the pointer moves over it), `"panel"` a floating panel with the platform's title bar, one per image beside the picture-in-picture window, which `exitPictureInPicture()` leaves open; `title`, `width` and `height` go only with `presentation`. The web shows either in Document Picture-in-Picture's window where the browser has it, else floats the default way; iOS and tvOS refuse it. The agent reads each window in `tree` (`pictureInPicture` on its image's row), presses it with `tap <image> pictureinpicture minimize\|back\|close\|hover` and pictures it with `screenshot <png> window pictureinpicture [<image>]` |, [compiler tests](../contract/cli/tests/it/picture_in_picture.rs), [web test](../host/web-js/picture-in-picture.test.mjs), [window tests](../host/apple/Tests/ExactKitTests/PictureInPictureWindowMacTests.swift) |
 | `deliveryCheck`, `deliveryActivate` | [delivery corpus](../contract/corpus/delivery.contract) |
 | `playSound(src, at=, gain=, group=, playbackRate=, pan=)`: a new voice of a declared sound (a literal `src` must be declared, `type-sound-undeclared`), starting at `at` on the runner's clock (`performanceNow()`'s milliseconds; the past and the default are the commit's time), at a linear `gain` 0–1 (default 1; a literal outside is refused, a computed one clamped), in a `group` that is monophonic by start time, read at `playbackRate` 0.25–4 (default 1; pitch and length move together, so the voice lasts its file's length divided by it) and placed at `pan` −1 to 1 (default 0, centred; Web Audio's equal-power `StereoPannerNode`), each refused as a literal outside its range and clamped when computed, as `gain` is. `playSounds(hits)`: one voice per item of a list of a shape whose fields are, in order, `src: string`, `at: number`, `gain: number`, `group: string`, then optionally `playbackRate: number` and then `pan: number`. `stopSounds()`, `stopSounds(group=)`: what sounds stops, what waits is cancelled. The runner keeps the voice table (`state sounds`); the web and Apple play it, Linux and Windows keep the record | [sound tests](../contract/cli/tests/it/sound.rs), [sounds conformance](../host/web-js/conformance/sounds/app.contract) |
 | `requestMIDIAccess()`, `sendMIDI(output, data, at=)`: ask for the MIDI ports `exactMIDI()` answers; send whole MIDI 1.0 messages to an output by `id` at `at` on the runner's clock. The runner keeps the queue (`state midi`); a host hands each message to its output 50 ms before it is due ([MIDI](#midi-exactmidi-sendmidi-midimessage)) | [MIDI tests](../contract/cli/tests/it/midi.rs), [MIDI conformance](../host/web-js/conformance/midi/app.contract), [Metronome](../apps/metronome/app.contract) |
@@ -2604,6 +2685,47 @@ Element-targeted commands use `id`, not `testId`. File pickers publish handles
 through the target's `change` event; cancellation uses `cancel`. Permissions,
 accepted file types, app identity, and platform support remain part of the app
 integration. A recognized command name alone does not prove those prerequisites.
+
+### Frame trace fields
+
+`stopTrace_EXPERIMENTAL` writes its trace as data with no explanations; these are its fields. The compact copy writes the totals, segments and late frames as rows whose fields its `totalColumns`, `segmentColumns` and `lateColumns` name.
+
+On iOS and tvOS 18 and later (not Mac Catalyst), with the session's view in a window scene, a recording's frames are the UI updates UIKit makes for it, seen by a passive `UIUpdateLink` that asks for no update and no frame rate, so a scroll runs at the rate the system gives it and a period at rest has no frames. Elsewhere they are the callbacks of a display link that asks for the display's full rate. A passive recording pauses while the app is inactive or its view is outside a window; the next active update starts a new timing baseline.
+
+Presentation probe readings remain diagnostic until qualified on a physical device. They do not contribute to `hitchMs`, `hitchMsPerS` or `cause`.
+
+| Field | Meaning |
+|---|---|
+| `t`, `from`, `to` | ms since the process started (the media clock): a UI update's expected presentation (`UIUpdateInfo.estimatedPresentationTime`), or a display-link callback's time |
+| `interval` | ms between a frame's expected presentation and the one before's, or between a display-link callback and the one before |
+| `period`, `periodMs` | the display's frame period in ms: for UI updates the fastest it runs (`maximumFramesPerSecond`), so a lower rate counts as missed frames; for a display link as the callback before announced it (`targetTimestamp − timestamp`). `periodMs` is the median |
+| `hz`, `thermal` | a total's frames per second; the device's thermal state (`ProcessInfo.thermalState`) when the recording began and, when it changed, when it ended. A hot device and Low Power Mode (`lowPowerMode`) can lower a ProMotion display's rate |
+| `phase` | `drag`: a finger moves the scroller (`isTracking` and `isDragging`); `glide`: it decelerates after release; `bounce`: it is past its content's edge; `moving`: it moves with no finger on it (an animation, the app's own scroll); `rest`: no scroll, and every frame on a Mac, which follows no scroller |
+| `scroller` | the scroller a frame was read from: its node's test id, else `#` and its id, else `node` and the node's number, and `page` for the document's; a second scroller of one name is `name (2)` |
+| `offset` | a late frame's scroller offset in points as its update committed it, along the scroller's axis (y, or x for a sideways one) |
+| `missed` | frames the display showed again: `round(interval / period) − 1` |
+| `quiet` | a gap between UI updates that owed no frame: no scroll continued through it, no batch was pending at its start, and the main thread was free for a period or more of it. A new batch or first scroll after rest does not owe earlier frames. It is not late, misses nothing, and counts one period of its total's `ms` |
+| `cause` | what made a late frame late, by the part its `hitchMs` came from: `update`, its UI update's work ran past the completion deadline; `main`, the main thread was busy before the update began (its `start` longer than its `work`) or through all of a gap but one period; `rate`, a gap in which something moved, the main thread was free for a period or more of it, and UIKit made no update (the system's rate, as an animation at 80 Hz has, or the render server holding updates back). A display link's callback gap is `main`. `causes` counts them in a total |
+| `start`, `events`, `links`, `work` | a UI update's phases (UIUpdateActionPhase.h), ms: from its `modelTime` to its event dispatch, which work the main thread was busy with before it delays (about 0.5 ms when nothing does); its touch and gesture handling; its display links' callbacks; and its work from event dispatch to the end of its Core Animation commit, the three before it included. `meanWorkMs` and `maxWorkMs` are a total's |
+| `overrun` | how late the frame's commit was, ms: for UI updates, past their completion deadline (`UIUpdateInfo.completionDeadlineTime`), which delays the frame's presentation; for a display link on iOS and tvOS 18 and later, the same, or, when larger, how late an update that sampled no frame committed since the frame before; elsewhere, how long past the frame's target the main thread's turn ran |
+| `commit` | how long Core Animation's commit took, ms, the layout and drawing of the layers that needed it included: from the update's `beforeCATransactionCommit` to its `afterCATransactionCommit`. `meanCommitMs` is a total's |
+| `main` | ms of main-thread run-loop turns since the frame before: for UI updates, from the end of its commit to the end of this one's |
+| `own`, `ownMeanMs`, `ownMaxMs` | the recorder's own main-thread time in a UI update, ms, its probe's presentation included, and a total's mean and most |
+| `batches`, `apply` | the app's batches applied in the frame, and the ms applying them took |
+| `phases`, `unattributed` | main-thread ms by Exact host phase in the interval (`runtime` is waiting on the runner and the kernel's layout); `unattributed` is the rest: idle, UIKit's layout, the commit |
+| `hatches` | per frame, ms in each hatch call; in the report, `not timed in a production build` where the bake installs no diagnostics |
+| `phasesCoverage`, `coverage` | `partial` when the host phases or hatch calls kept no longer reach back over the whole frame |
+| `hitchMs`, `hitchMsPerS` | delay relative to the display’s fastest rate, and that delay per second. This includes lower system cadence (`rate`) and is not Apple’s scroll hitch ratio. A frame counts once, by the larger of its callback gap beyond one period and its commit delay rounded up to a whole period; a gap right after a late commit of the frame's own UI update counts only what that commit's delay did not. Each late frame carries its own part as `hitchMs`. Presentation probe readings are diagnostic and excluded from this estimate. |
+| `frames`, `ms`, `lateFrames`, `worstIntervalMs`, `meanMainMs`, `maxMainMs` | a total's frames, its length, its frames late by any measure (including diagnostic probe readings), its longest interval, and its main-thread time per frame, mean and most |
+| `screenLate` | ms a frame reached the screen after UIKit expected it (`UIUpdateInfo.estimatedPresentationTime`), when over half a period, as the presentation probe saw it: with UI updates, a recording keeps two transparent one-point Metal layers and, as each update for which a drawable of either is ready (cleared off the main thread) begins its commit, presents that drawable on its own; its `presentedTime` is when the composite holding it reached the screen. The simulator's Metal has no `presentedTime`: there the probe presents and hears nothing |
+| `unshown` | a frame whose probe drawable was never shown (a `presentedTime` of 0, as for a frame the render server skipped for a later one), so the frame before stayed on screen in its place; in a total, how many |
+| `probed` | in a total, the frames the probe reported, late or not |
+| `render` | on iOS and tvOS, what in the window costs the render server work of its own each frame it composites it, read once as the recording stops (`ms`, how long that took): `layers`, the visible layers; `rows` under `columns`, one per `kind`, `place` and `node` (the Exact node's test id, else `#` and its id, else `node` and its number), with the `top` and `height` its layers span and their `count`; a kind more than four nodes have in one place is one row, its `node` how many. A `kind` is `backdrop` (a `CABackdropLayer`, which UIKit's blur and glass use: it renders what lies behind it first), `portal` (another part of the tree rendered again), `filter`, `blend`, `mask`, `shadow` (without a `shadowPath`), `group` (group opacity) or `rasterize`, each an offscreen pass, or `metal` (a Metal layer, as MapKit's map, which the GPU draws itself). A `content` row is in the followed scroller's content coordinates, so a late frame's `offset` to `offset` plus the viewport's height is what was on screen; a `fixed` row (bars, overlays) is in the window's. The `fixed` rows come first. A list that builds its rows as they scroll in has only those near the viewport then. The compact copy keeps the rows that fit after its 12 worst late frames, and `shown` counts them |
+| `scrolledPt` | a segment's distance, from where its first interval began; none for the first segment of a scroller taken as it moved |
+| `droppedFrames` | frames after the first 36,000 (five minutes at 120 Hz), which a recording does not keep |
+| `lateShown`, `shown` | how many late frames (and in the compact copy, scroll segments) the trace reports of all there were. The full report keeps up to 200 late frames in time order, those late the longest by `hitchMs` when there are more; the compact copy lists the ones that fit, those late the longest first, and leaves out the segments at rest |
+| `fields`, `presentation` | the field-reference path, and `diagnostic` to identify the unqualified presentation probe readings; both are present in full and compact reports |
+| `full` | the whole trace's file in the app's temporary directory and its size, or `not saved` |
 
 ## Semantic restrictions
 

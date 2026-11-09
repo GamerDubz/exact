@@ -1155,6 +1155,7 @@ pub fn style_writes(id: u16, timeline: bool, written: bool) -> Result<Vec<Write>
         ],
         // Apple's affordances: no declaration on the web.
         StyleId::SymbolRendering
+        | StyleId::TintAdjustment
         | StyleId::SymbolPalette
         | StyleId::SymbolValue
         | StyleId::SymbolEffect

@@ -128,8 +128,8 @@ pub const STYLE_NAMES: &[(&str, &str, AttrTarget)] = &[
     // platform draws it.
     ("accent-color", "css CSS UI 4", AttrTarget::Styles(&[StyleId::AccentColor])),
     ("appearance", "css CSS UI 4", AttrTarget::Styles(&[StyleId::Appearance])),
-    // A text field's focus ring off: `outline: none`,
-    // the one value either name takes (`fields::outline_refusal`).
+    // the focus ring off, on any element that takes
+    // the focus: `outline: none`, the one value either name takes.
     ("outline-style", "css CSS UI 4", AttrTarget::Styles(&[StyleId::OutlineStyle])),
     ("outline", "css CSS UI 4", AttrTarget::Styles(&[StyleId::OutlineStyle])),
     ("-exact-tint-color", "exact", AttrTarget::Styles(&[StyleId::TintColor])),
@@ -265,7 +265,8 @@ pub const STYLE_NAMES: &[(&str, &str, AttrTarget)] = &[
     ("backface-visibility", "css CSS Transforms 2", AttrTarget::Styles(&[StyleId::BackfaceVisibility])),
     // Declared rows CSS has no name for.
     ("-exact-symbol-rendering", "exact", AttrTarget::Styles(&[StyleId::SymbolRendering])),
-    // A subtree's app modes, pinned.
+    ("-exact-tint-adjustment", "exact", AttrTarget::Styles(&[StyleId::TintAdjustment])),
+    // a subtree's app modes, pinned.
     ("-exact-mode", "exact", AttrTarget::Styles(&[StyleId::Mode])),
     ("-exact-symbol-palette", "exact", AttrTarget::Styles(&[StyleId::SymbolPalette])),
     ("-exact-symbol-value", "exact", AttrTarget::Styles(&[StyleId::SymbolValue])),
@@ -284,9 +285,7 @@ pub const STYLE_NAMES: &[(&str, &str, AttrTarget)] = &[
     ("-exact-press-scale", "exact", AttrTarget::Styles(&[StyleId::PressScale])),
     // The author's pressed paint, host-owned as the scale is.
     ("-exact-press-opacity", "exact", AttrTarget::Styles(&[StyleId::PressOpacity])),
-    ("-exact-press-background-color", "exact", AttrTarget::Styles(&[StyleId::PressBackgroundColor])),
-    ("-exact-press-color", "exact", AttrTarget::Styles(&[StyleId::PressColor])),
-    // Lowering's row for `:active`'s `opacity`, never an
+    // lowering's row for `:active`'s `opacity`, never an
     // author's (`nodes.rs` refuses it written).
     ("-exact-press-opacity-to", "exact", AttrTarget::Styles(&[StyleId::PressOpacityTo])),
     // CSS Animations: the shorthand is the row; the

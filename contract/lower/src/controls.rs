@@ -548,9 +548,9 @@ pub(crate) fn button_context(
 
 /// The style rows a native button's box may carry: where it
 /// sits and how big it is, whether it shows (`display` is checked to be its
-/// own `flex` or `none`), its opacity and transforms, its clip, its accent.
-/// Its semantic content rows are the ones listed here; chrome and
-/// arbitrary inner layout remain the platform's to draw.
+/// own `flex` or `none`), its opacity and transforms, its clip, its accent,
+/// and `outline: none`, which takes the platform's focus ring off. Its
+/// chrome and arbitrary inner layout remain the platform's to draw.
 const NATIVE_ROWS: &[StyleId] = &[
     StyleId::ControlSize,
     StyleId::ControlCornerStyle,
@@ -610,10 +610,16 @@ const NATIVE_ROWS: &[StyleId] = &[
     StyleId::TransformOrigin,
     StyleId::ClipPath,
     StyleId::AccentColor,
+    StyleId::OutlineStyle,
     StyleId::Appearance,
     StyleId::Transition,
     StyleId::Animation,
     StyleId::ExitAnimation,
+    StyleId::PressScale,
+    StyleId::PressOpacity,
+    StyleId::PressOpacityTo,
+    StyleId::PressBackgroundColor,
+    StyleId::PressColor,
 ];
 
 /// Whether a native button's box may carry row `id` ([`NATIVE_ROWS`]): what

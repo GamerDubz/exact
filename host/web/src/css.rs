@@ -418,14 +418,20 @@ fn css_text_in(
             // boundary's tuple: nothing to write, none skipped.
             (StyleId::RotateAxis | StyleId::TranslateZ | StyleId::TranslatePercent, _) => {}
             (StyleId::Mode, _) => {}
-            // Where a grouped row's separator starts (index.html), inherited
-            // as the direction is.
+            // Where a grouped row's separator starts (index.html), and which
+            // way a leading symbol moves it, inherited as the direction is.
             (StyleId::Direction, RowValue::Enum(dir)) => {
+                let (x, sign) = if *dir == "rtl" {
+                    ("100%", -1)
+                } else {
+                    ("0px", 1)
+                };
                 push_text!(
                     &mut out,
-                    "direction:{};--exact-separator-x:{};",
+                    "direction:{};--exact-separator-x:{};--exact-separator-dir:{};",
                     dir,
-                    if *dir == "rtl" { "100%" } else { "0" }
+                    x,
+                    sign
                 );
             }
             _ if lowered(id, &value) => {
@@ -595,6 +601,7 @@ fn lowered(id: StyleId, value: &RowValue<'_>) -> bool {
         _ if matches!(
             id,
             StyleId::SymbolRendering
+                | StyleId::TintAdjustment
                 | StyleId::SymbolValue
                 | StyleId::SymbolEffect
                 | StyleId::ContentTransition

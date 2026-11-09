@@ -12,11 +12,14 @@ import AppKit
 
 /// What the core asks of the Markdown capability.
 package protocol MarkdownCapability: AnyObject {
-    /// `source` as display runs over `base` (the node's run); `color` its ink,
-    /// `linkColor` a link's and `atomColor` an atom's where it is not `color`.
+    /// `source` as display runs over `base` (the node's run); `color` its ink.
     /// `boldText`: Bold Text weights `base`, so a
     /// piece's own weight (bold) takes the same step.
-    func expand(_ source: String, base: Run, color: [Double]?, linkColor: [Double]?, atomColor: [Double]?, boldText: Bool, atoms: MarkdownAtoms) -> [Run]
+    func expand(_ source: String, base: Run, color: [Double]?, boldText: Bool, atoms: MarkdownAtoms) -> [Run]
+    /// A text area's `source` as its editor lays it out, over `base`, for
+    /// measuring: each atom's pill a box no wider than `width`, its runs'
+    /// fonts by `font`.
+    func editorRuns(_ source: String, base: Run, atoms: MarkdownAtoms, width: CGFloat?, font: (Run) -> PlatformFont) -> [Run]
     /// A Markdown text area's styler.
     func editor() -> MarkdownEditing
     /// `range` (UTF-16, the whole source when nil) of `source` without its
@@ -102,6 +105,9 @@ package struct MarkdownAtoms: Hashable {
     /// A reader's lines run right to left, its node's `direction`: a pill
     /// whose face pins none is isolated in it.
     package var rtl = false
+    /// The source offset where the atom under the pointer starts, or -1:
+    /// its kind's `:hover` paint draws on it.
+    package var hovered = -1
     package init(kinds: String = "", faces: String = "", styles: String = "", dark: Bool = false, contrast: Bool = false, rtl: Bool = false) {
         (self.kinds, self.faces, self.styles, self.dark, self.contrast, self.rtl) = (kinds, faces, styles, dark, contrast, rtl)
     }
@@ -127,6 +133,29 @@ package final class MarkupAtom: NSObject {
     package let direction: String
     /// Its face's `ariaLabel`; empty for its label.
     package let ariaLabel: String
+    /// The selection is exactly it, and the pointer is over it: its kind's
+    /// `:checked` and `:hover` paint draw on it.
+    package var exact = false, hovered = false
+    /// What its kind's style says of the pill, in px: its inline padding
+    /// (`em` of the label's size when `paddingEm`), nil for the
+    /// platform's; its border's width and colour (nil the ink); its corner
+    /// radius, nil for the platform's; its ring's width, colour (nil the
+    /// ink) and offset; and whether its label is underlined.
+    package var padding: CGFloat?, paddingEm = false
+    /// Its icon's side and the space between it and its label, in px
+    /// (`em` of the label's size when `iconSizeEm`, `gapEm`); nil for the
+    /// platform's, the text's cap height and a quarter of its size.
+    package var iconSize: CGFloat?, iconSizeEm = false, gap: CGFloat?, gapEm = false
+    package var borderWidth: CGFloat = 0, border: [Double]?
+    package var radius: CGFloat?
+    package var ring: CGFloat = 0, ringInk: [Double]?, ringOffset: CGFloat = 0
+    package var underline = false
+    /// Its kind's `:checked` paint gives a fill (an ink): exactly selected,
+    /// that one draws in place of the platform's selected look.
+    package var ownsSelectedFill = false, ownsSelectedInk = false
+    /// The field it is drawn in, whose app's files its icon is read from
+    /// and which draws it again when the icon arrives.
+    package weak var node: NodeView?
     package init(kind: String, label: String, icon: String, title: String, role: String, href: String, ink: [Double]?, background: [Double]?,
                  selected: Bool, emphasized: Bool = true, dark: Bool, contrast: Bool, direction: String = "", ariaLabel: String = "") {
         (self.kind, self.label, self.icon, self.title, self.role, self.href) = (kind, label, icon, title, role, href)

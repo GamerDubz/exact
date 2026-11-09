@@ -328,7 +328,7 @@ extension Agent {
         let local = presenter.inlineText(UInt32(id)).map { host.inlineBounds($0) ?? .zero } ?? host.bounds
         let b = presenter.inlineFrame(UInt32(id)) ?? box(host, region: local)
         var space: [String: Any] = ["viewport": rect(b), "local": ["w": Agent.r2(local.width), "h": Agent.r2(local.height)],
-                                    "capture": ["scale": Agent.r2(host.window?.backingScaleFactor ?? 1)]]
+                                    "capture": ["scale": Agent.r2(host.pixelScale ?? 1)]]
         if let w = host.window, let content = w.contentView {
             let inWindow = host.convert(local, to: nil)
             space["window"] = rect(NSRect(x: inWindow.origin.x, y: content.frame.height - inWindow.maxY, width: inWindow.width, height: inWindow.height))
@@ -641,7 +641,7 @@ extension Agent {
             guard let point = tapPoint(req, node: node) else {
                 return ["error": "tap #\(req["id"] ?? node.id): no visible text fragment; scroll it into view first"]
             }
-            if !CGRect(origin: .zero, size: presenter.viewport.bounds.size).contains(point) {
+            if !CGRect(origin: .zero, size: presenter.viewportSize).contains(point) {
                 return ["error": "tap #\(node.id): its middle is outside the viewport; scroll it into view first"]
             }
         }
@@ -1155,7 +1155,7 @@ extension Agent {
     /// EXACT_AGENT_ACTIVATE=1 (only scripts/measure-controls.mjs sets it): an
     /// activated run, whose pictures say whether they were (ExactMac main.swift).
     nonisolated static let activated = ExactEnv.agentMode && ExactEnv.environment["EXACT_AGENT_ACTIVATE"] == "1"
-    private static func ownWindowImage(_ number: Int) -> CGImage? {
+    static func ownWindowImage(_ number: Int) -> CGImage? {
         typealias Create = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil } // RTLD_DEFAULT
         let create = unsafeBitCast(symbol, to: Create.self)
@@ -1243,6 +1243,7 @@ extension Agent {
         if let now = session.clock, session.canvases.waitUntilReady() { session.canvases.settle(now: now) }
         presenter.canvas2d.waitForReplays()
         guard let path = req["path"] as? String else { return ["malformed": true, "error": "screenshot needs a path"] }
+        if req["window"] as? String == "pictureinpicture" { return pictureInPictureShot(path, of: (req["id"] as? NSNumber)?.uint32Value) }
         let v = presenter.navigation.split.agentRoot
         if req["window"] as? Bool == true {
             // The window server's picture of this window — Metal layers
@@ -1348,14 +1349,17 @@ extension Capture {
 
     /// `view` drawn by `cacheDisplay` as the window shows it: as a capture
     /// (`capturing`), box fills an inset shadow paints hidden, siblings in
-    /// their z order, animations at what they present.
+    /// their z order, animations at what they present, and a backdrop box's
+    /// shadow drawn by a view under it (`standShadows`). Undoing the reorder
+    /// moves the boxes' layers, so the shadows' stands find their places again.
     static func draw(_ view: NSView, to rep: NSBitmapImageRep) {
         let shown = showAnimations(in: view.layer)
-        let fills = hideBoxFills(in: view), ordered = paintOrder(in: view)
+        let fills = hideBoxFills(in: view), ordered = paintOrder(in: view), stands = standShadows(in: view)
         capturing = true
         view.cacheDisplay(in: view.bounds, to: rep)
         capturing = false
-        ordered(); restore(fills); shown()
+        stands(); ordered(); restore(fills); shown()
+        ShadowStand.followAll()
     }
 
     /// `cacheDisplay` draws subviews in array order; the window server

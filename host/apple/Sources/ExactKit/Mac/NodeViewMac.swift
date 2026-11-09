@@ -89,6 +89,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     var cachedTextLayout: (width: CGFloat, paragraph: Paragraph)?
     var liveText: String?
     package var props: [String: String] = [:] { didSet { presenter?.propsChanged(self); presenter?.mouseChain.bubbledPress?.validate() } }
+    var nativeActiveRefusals: [String: String] = [:]
     package var style: NodeStyle = [:]
     /// What the host's own writers hid (a covered route, a tab a native control
     /// stands in for, a placement); a `display: none` box is hidden besides, as
@@ -109,6 +110,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
             let css = style["display"]?.string == "none"
             if !(newValue && css && !hostHidden && super.isHidden) { hostHidden = newValue }
             super.isHidden = hostHidden || css
+            if shadowStand != nil { followShadowStand() }
         }
     }
     var clipPath: CGPath?, clipRule = CGPathFillRule.winding
@@ -175,7 +177,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     var content = CGSize.zero
     /// The platform view returned by the dlopened iframe arm.
     var video: VideoView?
-    var web: NSView?
+    var web: NSView? { didSet { if web !== oldValue { placeWeb() } } }
     /// A canvas node's Metal layer.
     package var metal: MetalView?
     package var canvasInput: CanvasInput?
@@ -275,7 +277,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     var fieldFocused = false { didSet { if fieldFocused != oldValue { applyBoxLayer(); needsDisplay = true } } }
     /// A key down's default action at a focused node; its `key` handlers
     /// heard it before AppKit delivered it (`Presenter.keyDown`, KeyEvents.swift).
-    /// Space on a pressable fires `press`; Return is the default button's, and here only follows a focused link, as Safari does, or chooses a menu's row (`choosesOnReturn`).
+    /// Space on a pressable fires `press`; Return is the default button's, and here only follows a focused link, as Safari does, or presses a menu's row or a button the author opted in (`pressesOnReturn`).
     package override func keyDown(with event: NSEvent) {
         guard !inert else { return }
         if inputCanvas?.canvasInput?.key(event, down: true, source: self) == true { return }
@@ -295,7 +297,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
             return
         }
         if reorderKey(name) || presenter?.controls.radioKey(self, name, held: KeyCodes.held(event.modifierFlags)) == true { return }
-        let presses = name == " " || name == "Enter" && choosesOnReturn
+        let presses = name == " " || name == "Enter" && pressesOnReturn
         if isButton, !pressable, presses {
             activateNative()
             return
@@ -541,6 +543,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
     /// Where children go: the scroll document view, or this view; a glass
     /// group innermost (`GlassGroup.swift`).
     var container: NSView { glassGroupContent ?? baseContainer }
+    package var grid: GridPlace? // where layout put this box and where it is drawn (`PixelGridMac.swift`)
 
     // Two semantic materials, not sampled blur constants.
     // AppKit owns accessibility/appearance adaptation, including Reduce
@@ -1114,6 +1117,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         if old["appearance"] != s["appearance"] { needsLayout = true } // a form row's bezel (FormRowsMac.swift)
         if old["color_scheme"] != s["color_scheme"] { applyColorScheme() }
         if old["accent_color"] != s["accent_color"] { accentChanged() }
+        if old["outline_style"] != s["outline_style"], focusVisible { noteFocusRingMaskChanged() }
         if s["transform_origin"] != origin { applyTransform() }
         applySpace(changedFrom: old)
         decorationChanged(from: old)
@@ -1147,10 +1151,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
             sv.pointerOwner = self
             sv.collectionWillScroll = { [weak self] in
                 guard let self else { return }
-                // The reader's own scroll ends a smooth correction's animation.
-                if presenter?.collections.animating.contains(id) == true, let clip = scroll?.contentView {
-                    NSAnimationContext.runAnimationGroup({ c in c.duration = 0; clip.animator().setBoundsOrigin(clip.bounds.origin) })
-                }
+                // The reader's own scroll ends a smooth correction's animation (`stopAnimation`).
                 presenter?.collections.animationEnded(id, dragging: true)
                 presenter?.collections.userIntent(id, travel: true)
             }
@@ -1264,7 +1265,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         // display, so a new filtered box is not pictured empty.
         if layerBoxEligible, !Capture.capturing { applyLayerPaint() }
         setPaintPosition(paintZPosition)
-        f.render(layer, clip: resolvedClipMask(), scale: window?.backingScaleFactor ?? 2, dark: drawsDark,
+        f.render(layer, clip: resolvedClipMask(), scale: pixelScale ?? 2, dark: drawsDark,
                  node: id, fresh: fresh, shown: window == nil || !visibleRect.isEmpty) { [weak self] in
             if let self { presenter?.boxFilters.landed(self) }
         }
@@ -1320,9 +1321,8 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
 
     func fitScroll() {
         guard let scroll, let document = scroll.documentView else { return }
-        let visible = scroll.contentView.bounds.size
-        let origin = scroll.kernelDocumentOrigin
-        let size = CGSize(width: max(content.width - origin.x, visible.width), height: max(content.height - origin.y, visible.height))
+        let visible = scroll.contentView.bounds.size, origin = scroll.kernelDocumentOrigin, o = grid?.origin ?? .zero, s = presenter?.gridScale ?? 1
+        let size = CGSize(width: max(PixelGrid.length(content.width, from: o, vertical: false, scale: s) - origin.x, visible.width), height: max(PixelGrid.length(content.height, from: o, vertical: true, scale: s) - origin.y, visible.height)) // ending where its last edge is drawn (`PixelGridMac.swift`)
         if document.frame.size != size { document.setFrameSize(size) }
     }
 
@@ -1338,7 +1338,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
 
     package override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        if textRaster != nil { textRasterKey = nil; textRasterPending = false; needsDisplay = true }
+        if textRaster != nil || isParagraph { invalidateText(); needsDisplay = true } // raster and line boxes: the display's pixels
         // A border's device pixels follow the scale (`BoxLayerMac.swift`).
         if layerBoxEligible && hasBoxPaint { needsDisplay = true }
     }
@@ -1404,7 +1404,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         // batch — no image, no timer, no motion — would never load it
         // (found by the readback fixture).
         if presenter?.views[id] === self { firstDraw?.drawn() }
-        if !cssVisibilityHidden, let ctx = NSGraphicsContext.current?.cgContext { drawCapturedShadow(ctx) }
+        if !cssVisibilityHidden, shadowStand == nil, let ctx = NSGraphicsContext.current?.cgContext { drawCapturedShadow(ctx) }
         // What the layer shows (`BoxLayerMac.swift`) is not painted again,
         // nor into a capture where the capture shows the layer's paint as
         // the window does (`captureShowsLayerPaint`).
@@ -1420,7 +1420,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
         if paintsBox, materialContent == nil { drawBoxBorder() }
         if !cssVisibilityHidden, kind == "image", !hasSymbolLeaf, flightLook == nil || imageLayer == nil, !(layerBoxEligible && !Capture.capturing && imageLayer != nil), let bitmap = raster?.image {
             // CSS object-fit over the content box (the frame inside border
-            // and padding), clipped by the border box's radius: `fill`
+            // and padding), clipped to the content edge's curve: `fill`
             // stretches, `contain`/`cover` keep the ratio, `none` is the
             // natural size, `scale-down` the smaller of none and contain;
             // an unknown value is the initial `fill`.
@@ -1430,7 +1430,7 @@ package final class NodeView: NSView, NSTextViewDelegate, NSTextFieldDelegate {
             let rect = RasterGeometry.rect(natural: bitmap.naturalSize, content: content, fit: fit)
             ctx.saveGState()
             path.addClip()
-            NSBezierPath(rect: content).addClip()
+            clipToContentEdge(ctx, content)
             ctx.translateBy(x: rect.minX, y: rect.maxY)
             ctx.scaleBy(x: 1, y: -1)
             RasterGeometry.draw(ctx, AnimatedRasters.shared.frame(for: self) ?? bitmap.image, in: CGRect(origin: .zero, size: rect.size), tint: channels("tint_color").map { TextEngine.color($0).cgColor })

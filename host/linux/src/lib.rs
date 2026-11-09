@@ -27,8 +27,11 @@
 //! - [`agent`] — the agent API on stdio (`Agent.swift`'s twin).
 //! - [`executor`] — `ibex2::host` on a worker thread for a request that
 //!   leaves the process, its wake a socketpair the loop polls.
-//! - [`delivery`] — the optional app-supplied delivery adapter boundary
-//!  ; no updater is linked by the host.
+//! - [`delivery`] — the optional app-supplied delivery adapter boundary;
+//! no updater is linked by the host.
+//! - [`journal`] — the event journal launch parts subscribe to: startup,
+//!   custom events, errors.
+//! - [`launch_marks`] — startup timestamps for the display path.
 //! - [`app`] — the entry: the environment, headless or display.
 //! - [`display`], [`input`], [`vnc`] (Linux) — KMS dumb buffers, evdev, and
 //!   the screen over RFB with a client's pointer and keys as input.
@@ -70,7 +73,9 @@ pub mod image;
 pub mod ink;
 #[cfg(target_os = "linux")]
 pub mod input;
+pub mod journal;
 mod kept;
+pub mod launch_marks;
 mod media_session;
 pub mod navigation;
 pub mod package;

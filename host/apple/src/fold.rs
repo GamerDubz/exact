@@ -104,6 +104,7 @@ impl<D: DataSource> Host<D> {
         };
         let changed = kernel.set_env(env).map_err(|e| format!("insets: {e:?}"))? || moved;
         if changed {
+            self.presence.unauthored = true;
             self.height_targets_dirty = true;
             for id in self.preorder() {
                 self.update(id, batch);
@@ -186,6 +187,7 @@ impl<D: DataSource> Host<D> {
             Err(e) => return self.finish(batch, Some(format!("segments: {e:?}"))),
         };
         if restyled {
+            self.presence.unauthored = true;
             self.height_targets_dirty = true;
             for id in self.preorder() {
                 self.update(id, &mut batch);
@@ -222,6 +224,17 @@ impl<D: exact_runner::DataSource> crate::Host<D> {
         let fonts = self.runner.kernel().env().button_fonts;
         self.measuring_traits_changed(Some((styles, fonts)))
     }
+    /// The text engine's line boxes round to another scale:
+    /// every paragraph is measured again, and the auto heights running
+    /// transitions target with them.
+    pub(crate) fn text_scale_changed(&mut self) -> String {
+        self.presence.unauthored = true;
+        self.height_targets_dirty = true;
+        self.runner.kernel_mut().remeasure_text();
+        let mut batch = Batch::new();
+        let error = self.layout(&mut batch).err();
+        self.finish(batch, error)
+    }
     /// The traits text and symbols are measured under changed (a scale, a
     /// content size, legibility, an appearance), with the control fonts they
     /// give when the host has them: everything is laid out again whether or
@@ -239,6 +252,7 @@ impl<D: exact_runner::DataSource> crate::Host<D> {
             env.control_text_styles = Some(styles);
             env.button_fonts = button_fonts;
         }
+        self.presence.unauthored = true;
         self.height_targets_dirty = true;
         let mut batch = Batch::new();
         let error = match self.runner.kernel_mut().set_env(env) {

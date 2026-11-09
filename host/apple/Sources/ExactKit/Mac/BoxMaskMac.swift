@@ -54,7 +54,7 @@ extension NodeView {
             // Conic and repeating masks use the drawn pixels.
             let m = GradientImageMaskLayer()
             m.frame = layer.bounds
-            m.contents = gradient.image(size: layer.bounds.size, scale: window?.backingScaleFactor ?? 2, dark: drawsDark)
+            m.contents = gradient.image(size: layer.bounds.size, scale: pixelScale ?? 2, dark: drawsDark)
             m.mask = clip
             return m
         }

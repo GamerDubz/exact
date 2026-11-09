@@ -1170,9 +1170,10 @@ An action can issue host commands such as `focus("editor")`,
 commands that address a node. The [command inventory](contract-grammar.md#host-commands)
 and linked checks describe the more specialized picker, sharing, formatting,
 scrolling, and delivery commands. Commands are distinct from pure functions:
-`openURL` does not return a Contract value, and a `fn` cannot issue it. The
-compiler does not check most commands' arguments, and hosts differ: the
-JavaScript web target has no `openURL`, and Linux carries neither `focus` nor
+`openURL` does not return a Contract value, and a `fn` cannot issue it; to hear
+whether the URL opened, name an element, `openURL(url, "opened")`, whose `change`
+hears `opened` or `failed`. The compiler does not check most commands'
+arguments, and hosts differ: headless Linux carries neither `focus` nor
 `openURL`. Check the host you target.
 
 A file `input` with no `accept`, an empty `accept`, or `accept="*/*"` offers any
@@ -1669,13 +1670,8 @@ dry run, which expects a committed tree (or `--dirty`); publication uses `--yes`
 an origin, a signing key, and the configured signed streams. Read
 [the deploy script](../scripts/deploy.mjs) and its signing module before changing
 trust or publishing. Writing Contract does not require inventing a deployment
-service. To share an iOS app through AppDrop, add `"appdrop": {}` under
-`deploy`: a deploy whose table has an iOS binary row builds the unsigned `.ipa`
-after the streams and publishes it to AppDrop. The first one creates the link
-and writes it to `deploy.appdrop.url`; commit that, and the install page offers
-it for iOS. Later ones publish the link's next version (`$APPDROP_MANAGE_KEY`,
-or the key the appdrop CLI saved, authorizes it). Bundle-only changes go over
-the air and never reach AppDrop.
+service. To put an iOS app on someone's iPhone, run `bun exact.mjs share`: it
+builds the app and prints an AppDrop link that installs it with their own Apple ID.
 
 ## Where to go next
 

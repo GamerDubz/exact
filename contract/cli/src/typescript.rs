@@ -152,8 +152,8 @@ pub fn typescript_exporting(plan: &Plan, exports: Option<&[String]>) -> Result<S
            key(name: string): Promise<CryptoKeyPair | null>;\n\
          }\n\
          declare global {\n\
-           /** Sign in through the system browser: the callback URL, or a rejection whose `status` is 499 cancelled, 403, 409, 428, 501 or 502. */\n\
-           function openAuthSession(url: string, options: { callback: string; state: string; ephemeral?: boolean }): Promise<string>;\n\
+           /** Sign in through the system browser: the callback URL, or a rejection whose `status` is 499 cancelled, 403, 409, 428, 501 or 502. `message` is the sentence a loopback callback's page shows in place of \"You can close this tab.\". */\n\
+           function openAuthSession(url: string, options: { callback: string; state: string; ephemeral?: boolean; message?: string }): Promise<string>;\n\
            /** This carrier's auth callback, known before PAR. */\n\
            function authCallback(): string;\n\
          }\n\

@@ -137,7 +137,7 @@ final class SegmentHost {
         let natural = control.intrinsicContentSize
         var size = CGSize(width: max(natural.width, 1), height: natural.height)
         // The padding and border around the content box layout sent
-        if owner.style["box_sizing"]?.string == "border-box" { size.height += owner.bounds.height - owner.contentBox().height }
+        if owner.style["box_sizing"]?.string == "border-box" { size.height += owner.layoutBounds.height - owner.contentBox().height }
         guard size.width.isFinite, size.height.isFinite, size.height > 0, sizes[owner.id] != size else { return }
         sizes[owner.id] = size
         report(owner, size)
@@ -186,6 +186,7 @@ final class SegmentHost {
                 decide(owner, unshown.map { "kept as authored: \(member) #\($0.id) is not one image or its label alone, which a segment cannot show" } ?? "kept as authored: fewer than two pressable \(member)s")
                 continue
             }
+            for tab in tabs { tab.rejectNativeActiveProperties(on: "NSSegmentedControl") }
             decide(owner, "projected to NSSegmentedControl (\(tabs.count) segments)")
             let ids = tabs.map(\.id)
             if members[owner.id] != ids {

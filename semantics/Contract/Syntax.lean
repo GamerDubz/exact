@@ -144,12 +144,24 @@ structure DeriveDecl where
   body : Expr
   deriving Repr, Inhabited
 
-/-- `resource name = source(args) as shape ty`. -/
+/-- A resource's `for item in list [key=k]`: one request for each element, keyed as a row is. The
+arguments and the key read the element as `item`; with no `key=` the
+element is its own key. -/
+structure ResourceEach where
+  item : String
+  list : Expr
+  key : Option Expr := .none
+  deriving Repr, Inhabited
+
+/-- `resource name = source(args) as shape ty`, or, over a list,
+`resource name = source(args) for item in list as shape S`, whose `ty` is
+`S[]`. -/
 structure ResourceDecl where
   name : String
   ty : Ty
   source : String
   args : List Expr
+  each : Option ResourceEach := .none
   deriving Repr, Inhabited
 
 /-- `mutation name as shape ty`: a slot of type `option<ty>`. -/

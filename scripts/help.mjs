@@ -53,7 +53,7 @@ const DRIVE_INTERNAL = ['--app <name>', '--session <label>', '--pid <pid>', '--o
 const NATIVE_PORTS = 'iOS simulator: a Unix socket; --device: a free TCP port; macOS, Linux, Android: stdio.';
 
 // host/apple/build.mjs's flags, which `ios` and `mac` both run: each documents its own, and takes the rest.
-const APPLE = ['--painted-benchmark', '--watchos', '--watch-sim <udid>', '--ios', '--tvos', '--device', '--run', '--no-install', '--prebuild', '--release', '--host', '--embed', '--bundle', '--distribution', '--unsigned', '--test',
+const APPLE = ['--painted-benchmark', '--watchos', '--watch-sim <udid>', '--ios', '--tvos', '--device', '--run', '--no-install', '--prebuild', '--release', '--host', '--embed', '--bundle', '--distribution', '--unsigned', '--test', '--only <Class,…>',
   '--archive <out.ipa>', '--sim <udid|name>', '--phone <udid|name>', '--url <url>', '--optimize <speed|size>', '--link <plan>', '--widget-gallery'];
 const appleRest = (documented) => APPLE.filter((spec) => !documented.some(([row]) => specs(row).some((d) => name(d) === name(spec))));
 const OPTIMIZE = ['--optimize speed|size', 'the Rust archive\'s (default speed, or app.json host.ios|macos.optimize)'];
@@ -256,6 +256,26 @@ Ports    none. Runs to completion (--run too); --prebuild returns at once, the b
          apart from this shell (its pid printed; test, agent and ios without it wait for it).`,
     example: 'bun exact.mjs ios --run',
   },
+  share: {
+    line: 'build for iPhone and print an AppDrop link that installs it',
+    usage: 'bun exact.mjs share [--new-link | --force] [--json]',
+    common: ['share    an AppDrop link that installs the app on an iPhone'],
+    flags: [
+      ['--new-link', 'a new link for this branch, when the last share was from another branch'],
+      ['--force', 'publish over the other branch\'s link instead'],
+      ['--json', 'one JSON object on stdout: url, revision, branch, action (or code and error)'],
+    ],
+    internal: ['--app <name>'],
+    body: `Run it when the app is ready for a person to try on their phone, and send them the link
+(stdout's last line). They open it on their iPhone, and AppDrop installs the app with their
+own Apple ID. The first share makes the link; later ones publish a new version to it, and
+an installed copy offers the update. With the app's and exact2's trees clean and unchanged
+since the last share it rebuilds nothing and prints the same link. A share from another git
+branch than the last stops with code link_branch_mismatch: pass --new-link or --force.
+The link is kept in .exact/appdrop.json; the iPhone build takes minutes the first time.
+Ports    none. Runs to completion.`,
+    example: 'bun exact.mjs share',
+  },
   mac: {
     line: 'build the macOS app (--run launches it here)',
     usage: 'bun exact.mjs mac [--run|--prebuild] [--release] [--bundle] [--url <url>] [--optimize speed|size]',
@@ -440,13 +460,16 @@ Ports    none. Runs to completion.`,
     example: 'bun exact.mjs update',
   },
   feedback: {
-    line: 'the authoring diary: preview, send, or set this project\'s standing answer',
-    usage: 'bun exact.mjs feedback [preview|send [--yes] [--readme]|delete <id>|status|always|never|ask|local]',
+    line: 'the authoring diary: a one-line note, preview, send, or set this project\'s standing answer',
+    usage: 'bun exact.mjs feedback [preview|note "<text>"|send [--yes] [--readme]|delete <id>|status|always|never|ask|local]',
     flags: [['--yes', 'with send: do not ask first on a terminal'], ['--readme', 'with send: attach the README (and AGENTS.md\'s own notes) too']],
-    body: `  preview (the default)    exactly what send would send, redacted; the README offered beside it
+    body: `  note "<text>"            add a note to the diary (with exact2's commit and the last command's verb,
+                           exit code and time; no output or code), then follow the standing answer
+  preview (the default)    exactly what send would send, redacted; the README offered beside it
   send · delete <id>       send it · delete a sent diary by its receipt
   status                   the standing answer, and what is unsent
   always|never|ask|local   set the answer (local: keep the diary, never ask or send)
+EXACT_FEEDBACK=0 silences the one-line nudges after commands and refuses every send.
 Ports    none; send makes one HTTPS request. Runs to completion.`,
     example: 'bun exact.mjs feedback status',
   },
@@ -526,7 +549,7 @@ AGENTS.md, package.json and .gitignore. A native verb (ios, mac, linux, android,
 in app.json the first time it runs and builds in a workspace generated under .exact/. Give
 --name and --bundle-id here, before the first build: a later change to the id makes the next build cold
 and leaves the old app installed. Then cd there: its exact.mjs runs everything, and bun exact.mjs help
-lists its verbs. Read docs/start-here.md first (a website: docs/start-here-site.md).
+lists its verbs. Read docs/start-here-site.md first for a website, else docs/start-here.md.
 Ports    none. Runs to completion.`,
     example: 'bun scripts/exact.mjs new ~/notes --name Notes --bundle-id com.yourcompany.notes && cd ~/notes && bun exact.mjs test web',
   },

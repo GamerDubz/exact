@@ -94,6 +94,8 @@ class FrameUI: NSObject, WKUIDelegate {
     /// A confirmation for another app's scheme is up: a second one is
     /// refused rather than stacked behind it.
     var prompting = false
+    /// A print panel is up: a second print is refused rather than stacked.
+    var printing = false
     var pages: [ObjectIdentifier: PageState] = [:]
     /// The sheets and panels up now, each with how it ends as Cancel when
     /// its frame or popup goes first.
@@ -240,7 +242,11 @@ class FrameUI: NSObject, WKUIDelegate {
             return nil
         }
         let disposition = GuestScheme.disposition(action, features: windowFeatures)
-        if disposition == "new-window" {
+        // A partitioned frame is a browser's tab, whose scripted window is a
+        // popup in its partition. An unpartitioned frame is part of the app's
+        // page: its `new-window` is the app's, as a tab is, as Electron's
+        // `setWindowOpenHandler` on an app's window decides every one.
+        if disposition == "new-window", arm.partition != nil {
             guard arm.handlesNewWindow else { log("a new-window for \(raw) is refused: the frame has no newwindow="); return nil }
             let popup = FramePopup(configuration: configuration, features: windowFeatures, opener: web, ui: self)
             popups.append(popup)
@@ -518,6 +524,7 @@ final class FramePopup: NSObject, WKUIDelegate, WKNavigationDelegate {
         // content controller is replaced before the view is made, so the
         // popup's own `window.postMessage` reaches its own listeners.
         configuration.userContentController = WKUserContentController()
+        ui.takePrints(on: configuration.userContentController)
         let width = CGFloat(features.width?.doubleValue ?? 800), height = CGFloat(features.height?.doubleValue ?? 600)
         web = WKWebView(frame: CGRect(x: 0, y: 0, width: width, height: height), configuration: configuration)
         self.ui = ui

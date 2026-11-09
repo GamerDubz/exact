@@ -62,6 +62,7 @@ mod nodes;
 mod overflow;
 pub mod params;
 mod popover_surface;
+mod resource_args;
 mod root_names;
 mod routes;
 mod row_look;
@@ -544,7 +545,10 @@ fn lower_body(
                         .then(|| "; the press's opacity is `opacity` in an `:active` part".to_string())
                         .or_else(|| fields::placeholder_hint(&a.name))
                         .or_else(|| lint::css_hint(&a.name))
-                        .or_else(|| tags::renamed(&a.name).map(|n| format!("; `{}` is spelled `{n}` here", a.name)))
+                        .or_else(|| tags::renamed(&a.name).map(|n| {
+                            if n.starts_with(":active ") { lint::active_migration_hint(&a.name, n) }
+                            else { format!("; `{}` is spelled `{n}` here", a.name) }
+                        }))
                         .or_else(|| tags::similar_attr(&a.name, true).map(|n| format!("; did you mean `{n}`?")))
                         .unwrap_or_default();
                     l.errors.push(LowerError {
@@ -712,25 +716,8 @@ fn lower_body(
         let code = l.expr_code(&d.expr, &scope, 0)?;
         l.b.set_derive_body(l.derives[i], code);
     }
-    for (i, r) in root.resources.iter().enumerate() {
-        let mut args = Vec::new();
-        for a in &r.args {
-            args.push(l.expr_code(a, &scope, 0)?);
-        }
-        let range = l.b.args(&args);
-        l.b.set_resource_args(l.resources[i], range);
-        // Declare first, install the full argument
-        // list, then count its context tail. No `with` keeps the default 0.
-        if let Some(identity) = r.identity {
-            let context = u16::try_from(r.args.len() - identity).map_err(|_| LowerError {
-                id: "lower-resource-context",
-                message: "a resource supports at most 65535 request context values".into(),
-                span: r.span,
-            })?;
-            l.b.set_resource_context(l.resources[i], context);
-        }
-    }
-    // A declared placeholder is a row of its own,
+    l.resource_args(root, &scope)?;
+    // a declared placeholder is a row of its own,
     // after every authored row; its arguments read no state.
     for (i, r) in root.resources.iter().enumerate() {
         let Some(p) = &r.placeholder else { continue };
@@ -1219,7 +1206,6 @@ impl<'a> Lowerer<'a> {
             );
         }
         if let Some(why) = shorthands::text_box_trim_refusal(&a.name, tag, module)
-            .or_else(|| fields::outline_refusal(&a.name, tag, control))
             .or_else(|| fields::placeholder_refusal(&a.name, tag, control))
         {
             return err("lower-attr-tag", why, a.span);

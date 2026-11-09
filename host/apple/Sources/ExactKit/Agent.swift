@@ -52,7 +52,7 @@ public final class Agent {
             #if os(iOS) || os(tvOS)
             let reach = presenter.reach(of: node)
             #else
-            let reach = CGRect(origin: .zero, size: presenter.viewport.bounds.size)
+            let reach = CGRect(origin: .zero, size: presenter.viewportSize)
             #endif
             guard let fragment = fragments.first(where: { reach.contains(CGPoint(x: $0.midX, y: $0.midY)) }) ?? fragments.first else { return nil }
             bounds = fragment
@@ -189,7 +189,7 @@ public final class Agent {
         if op == "perf", req["frames"] as? Bool == true {
             let selected = req["source"] as? String == "scroll" ? session.frameHealth.nativeHealth : session.frameHealth
             if req["source"] as? String == "scroll", selected == nil {
-                Agent.reply(["format": FrameHealthMetrics.format, "available": false, "error": "native-scroll-unobserved", "reason": FrameHealth.nativeObserverAllowed ? "No native scroll has been observed. Reproduce a native drag on iOS/tvOS 18 or later." : "Native-scroll observation is experimental and disabled in release builds. Use a development build with iOS/tvOS 18 or later."])
+                Agent.reply(["format": FrameHealthMetrics.format, "available": false, "error": "native-scroll-unobserved", "reason": FrameHealth.developmentObserver ? "No native scroll has been observed. Reproduce a native drag on iOS/tvOS 18 or later." : "Native-scroll observation is experimental and disabled in release builds. Use a development build with iOS/tvOS 18 or later."])
                 return
             }
             // `perf frames track` (exact.frame-health.track/1): one node's scroller, per committed offset, leased.
@@ -281,7 +281,12 @@ public final class Agent {
         }
         switch op {
         case "tree" where req["ax"] as? Bool == true: Agent.reply(accessibilityElementsTree(req))
-        case "tree": Agent.reply(session.canvases.decorate(req, decorateTree(presenter.elements.regions.decorate(session.natives.decorate(session.webviews.tree(line))))))
+        case "tree":
+            var tree = decorateTree(presenter.elements.regions.decorate(session.natives.decorate(session.webviews.tree(line))))
+            #if os(macOS)
+            tree = decoratePictureInPicture(tree)
+            #endif
+            Agent.reply(session.canvases.decorate(req, tree))
         case "layout": Agent.reply(tagged(inspectLayout(req) ?? layout(req))) // `native`, `agree`
         // A call that moved something settles the canvases before it
         // replies (the agent's fixed point; a placement is read after a
@@ -328,6 +333,13 @@ public final class Agent {
                 #endif
             } else if let action = req["mediaSession"] as? String {
                 r = mediaSessionTap(req, action: action) // never a press
+            } else if let control = req["pictureInPicture"] as? String {
+                // Exact's picture-in-picture window's controls.
+                #if os(macOS)
+                r = pictureInPictureTap(req, control: control)
+                #else
+                r = ["error": "unsupported: Exact's picture-in-picture window is the Mac's"]
+                #endif
             } else if let into = req["into"] as? [String: Any] {
                 r = intoView(req, into)
             } else { r = settling(session.canvases.releaseContact(req) ?? tap(req)) }
@@ -402,6 +414,7 @@ public final class Agent {
                 }
             }
             nativeSections["presence"] = presenter.presenceObservation()
+            nativeSections["observe"] = ExactLaunch.shared.report(for: session)
             nativeSections["media"] = presenter.views.compactMap { id, view in view.video.map { ["id": id, "state": $0.state()] as [String: Any] } }
             nativeSections["mediaSession"] = mediaSessionState()
             // The drive's app storage: none unless it names a scratch store.
@@ -1014,6 +1027,12 @@ public final class Agent {
                     out["tickets"] = o["tickets"]
                     return out
                 }
+                // An aria-busy element is still loading, so the screen has not settled.
+                if let busy = ExactLaunch.ledger(session)?.items.filter({ $0.hasPrefix("busy:") }), !busy.isEmpty {
+                    var out = reply(landed, false, reason: "busy")
+                    out["busy"] = busy.map { String($0.dropFirst(5)) }
+                    return out
+                }
                 return reply(landed, true)
             }
             rounds += 1
@@ -1257,4 +1276,39 @@ public extension ExactEnv {
     /// `--touch platform` launches with, shows UIKit's:
     /// a real touch opens one and picks its item.
     static let agentPaints = agentDriven && environment["EXACT_AGENT_PRESENTATION"] != "native"
+}
+
+extension ExactSession {
+    /// The agent API's runner half: `tree`, `state`, `logs`, `settle`.
+    public func agent(_ request: String) -> String { runtime.agent(request) }
+    /// A line for the runner's journal: a
+    /// refused intent and its reason, read back through `logs`.
+    public func log(_ line: String) { runtime.log(line) }
+    /// The number of live views the presenter holds (the smoke reads it).
+    public var viewCount: Int { presenter.views.count }
+    /// The first root's frame size (the smoke reads it).
+    public var rootSize: CGSize { presenter.rootSize }
+    /// The viewport's size in points: what the kernel lays out under.
+    public var viewportSize: CGSize { presenter.viewportSize }
+    /// The text engine's counters since this session started (the smoke reads them).
+    public var measureCount: Int { Owner.shared.sync { text.measuring.measureCount } }
+    public var measureHits: Int { Owner.shared.sync { text.measuring.measureHits } }
+    public var measureSeconds: Double { Owner.shared.sync { text.measuring.measureSeconds } }
+    /// The GPU module's and the web arm's status lines (the smoke reads them).
+    public var gpuStatus: String { canvases.status }
+    public var webStatus: String { webviews.status }
+    /// The window's occlusion changed (macOS): the canvases follow.
+    public func occlusionChanged() {
+        #if os(macOS)
+        canvases.occlusionChanged()
+        #endif
+        frames.run(frames.motion || frames.timerSoon || canvases.wantsFrames)
+    }
+    #if os(iOS) || os(tvOS)
+    /// A hardware keyboard's Tab (or Shift-Tab) when no node of this session
+    /// holds the focus: an app's last responder forwards it here, as macOS's
+    /// window starts its key-view loop at the view.
+    public func moveFocus(backward: Bool) { presenter.moveFocus(backward: backward) }
+    #endif
+
 }

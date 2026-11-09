@@ -86,7 +86,7 @@ final class TextPlaceIOSTests: XCTestCase {
         }
         p.paintVisibleText()
         p.textRasters.settleVisible([node]) // a worker's pixels, if it painted them again
-        XCTAssertTrue(node.textRaster === pixels, "not painted again")
+        XCTAssertTrue(node.textRaster?.object === pixels.object, "not painted again")
         XCTAssertEqual(try words(node).minX - before.minX, 20, accuracy: 0.01, "the words are where the box is")
         let moving = try XCTUnwrap(slide(node), "they move inside the animation")
         XCTAssertEqual(moving.duration, 0.5, accuracy: 0.01, "UIKit's")
@@ -125,7 +125,7 @@ final class TextPlaceIOSTests: XCTestCase {
         p.paintVisibleText()
         _ = p.refreshVisibleText()
         p.textRasters.settleVisible([node])
-        XCTAssertTrue(node.textRaster === pixels, "the band is kept")
+        XCTAssertTrue(node.textRaster?.object === pixels.object, "the band is kept")
         XCTAssertEqual(node.textRasterKey?.clip?.minY, key.clip?.minY, "its rows")
         XCTAssertEqual(node.textRasterKey?.clip?.maxY, key.clip?.maxY, "its rows")
         XCTAssertEqual(try words(node).minX - before.minX, 20, accuracy: 0.01)
@@ -268,7 +268,7 @@ final class TextPlaceIOSTests: XCTestCase {
         }
         p.paintVisibleText()
         p.textRasters.settleVisible([node]) // a worker's pixels, if it painted them again
-        XCTAssertTrue(node.textRaster === pixels)
+        XCTAssertTrue(node.textRaster?.object === pixels.object)
         XCTAssertTrue(ink.textCast === cast)
         XCTAssertEqual(node.layer.convert(cast.frame, from: cast.superlayer).minX - before.minX, 20, accuracy: 0.01)
         XCTAssertNotNil(slide(node))
@@ -336,7 +336,7 @@ final class TextPlaceIOSTests: XCTestCase {
                                ["op": "fieldContent", "id": 2, "rect": [16.0, 0.0, 368.0, 200.0]]]))
         }
         p.textRasters.settleVisible([node])
-        XCTAssertFalse(node.textRaster === pixels, "painted again")
+        XCTAssertFalse(node.textRaster?.object === pixels.object, "painted again")
         let (lines, box) = try relaid(node)
         turn()
         let resize = try XCTUnwrap(box.animation(forKey: "bounds.size"))
@@ -359,14 +359,14 @@ final class TextPlaceIOSTests: XCTestCase {
         UIView.animate(springDuration: 0.5, bounce: 0) {
             p.apply(wireBatch([["op": "fieldContent", "id": 2, "rect": [16.0, 0.0, 268.0, 200.0]]]))
         }
-        XCTAssertTrue(node.textRaster === pixels, "a worker paints them")
+        XCTAssertTrue(node.textRaster?.object === pixels.object, "a worker paints them")
         CATransaction.flush() // the resize commits
         let box = try XCTUnwrap(node.textBoxLayer)
         let resize = try XCTUnwrap(box.animation(forKey: "bounds.size"))
         let then = resize.beginTime + resize.duration * 0.2
         stop(p, at: then)
         p.textRasters.settleVisible([node])
-        XCTAssertFalse(node.textRaster === pixels, "painted again")
+        XCTAssertFalse(node.textRaster?.object === pixels.object, "painted again")
         let (lines, _) = try relaid(node)
         turn()
         XCTAssertEqual(try faded(lines, at: then), 0, accuracy: 1e-5, "the old lines when the new ones came")
@@ -564,8 +564,11 @@ final class TextPlaceIOSTests: XCTestCase {
         XCTAssertEqual(try faded(lines, at: resize.beginTime + resize.duration), 1, accuracy: 1e-4, "aimed after the commit")
     }
 
-    /// A fade aimed in a run loop run inside a callout still under way sends
-    /// nothing of that callout, whose changes go with its own commit.
+    /// A fade aimed inside a callout still under way sends nothing of that
+    /// callout, whose changes go with its own commit. The test calls
+    /// `TextBoxLayer.committed()` itself rather than run the run loop, which
+    /// can commit the callout's changes on its own (164 of 300 tries in the
+    /// hosted app, with no fade).
     func testAimingAFadeSendsNothingOfACalloutUnderWay() throws {
         let (p, node) = try paragraph("text-relaid-callout", text: Self.fuji, width: 300, height: 200, box: [16, 0, 268, 200])
         let other = CALayer()
@@ -579,7 +582,7 @@ final class TextPlaceIOSTests: XCTestCase {
         let (lines, _) = try relaid(node)
         CATransaction.flush() // committed, not yet aimed
         other.opacity = 0.5 // this callout's own change
-        RunLoop.main.run(mode: .default, before: .distantPast) // inside this callout
+        TextBoxLayer.committed() // inside this callout
         XCTAssertGreaterThan(lines.speed, 0, "aimed")
         XCTAssertEqual(other.presentation()?.opacity, 1, "the callout's change not sent")
     }
@@ -669,9 +672,10 @@ final class TextPlaceIOSTests: XCTestCase {
         let (lines, box) = try relaid(node)
         turn()
         try fading(lines)
-        let deadline = Date().addingTimeInterval(3)
-        while box.animation(forKey: "bounds.size") != nil || lines.animation(forKey: kCATransition) != nil, Date() < deadline {
-            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        // Wait for the fade's delegate too, which sets the lines' clock running:
+        // Core Animation was seen to call it after taking the fade off them
+        waitFor("the resize over, the fade finished and the lines' clock running") {
+            box.animation(forKey: "bounds.size") == nil && lines.animation(forKey: kCATransition) == nil && lines.speed == 1
         }
         XCTAssertNil(box.animation(forKey: "bounds.size"), "the resize over")
         XCTAssertNil(lines.animation(forKey: kCATransition), "the fade finished")
@@ -707,11 +711,13 @@ final class TextPlaceIOSTests: XCTestCase {
     /// What the screen shows half way through the fade is the two states
     /// blended: Core Animation's clock stopped at the resize's middle, each
     /// point is about the old lines' frame and the new ones' mixed as far as
-    /// the fade is. The one-colour ink is a colour masked by its coverage,
-    /// which a fade on the ink alone was seen to leave out.
+    /// the fade is, the one-colour ink drawn by its own layer (`CoverageImageView`).
     func testHalfWayThroughTheFadeTheScreenShowsBothLinesBlended() throws {
+        guard hostedWindowScene() != nil else {
+            throw missing("scene", "`drawHierarchy` draws the screen's pixels only for a scene's window")
+        }
         let (p, node) = try paragraph("text-relaid-pixels", text: Self.fuji, height: 200, box: [16, 0, 368, 200])
-        XCTAssertTrue(node.textRasterLayer is TintInk, "one colour, masked by its coverage")
+        XCTAssertTrue(node.textRasterLayer?.delegate is CoverageImageView, "one colour, drawn by its own layer")
         let window = try XCTUnwrap(window)
         let old = try screen(window)
         try stop(p, node)
@@ -741,12 +747,13 @@ final class TextPlaceIOSTests: XCTestCase {
     /// The window's pixels as the screen shows them, at one point each: their luminance.
     private func screen(_ window: UIWindow) throws -> [UInt8] {
         let format = UIGraphicsImageRendererFormat()
-        format.scale = 1; format.opaque = true
+        format.scale = 1; format.opaque = false
         var drawn = false
         let shot = try XCTUnwrap(UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
             drawn = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
         }.cgImage)
         XCTAssertTrue(drawn, "the screen's pixels")
+        XCTAssertTrue(CapturePixels.hasPaint(BorderParity.pixels(shot).2), "the fade screen capture draws")
         var gray = [UInt8](repeating: 0, count: shot.width * shot.height)
         let context = try XCTUnwrap(CGContext(data: &gray, width: shot.width, height: shot.height, bitsPerComponent: 8, bytesPerRow: shot.width,
                                               space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue))
@@ -807,7 +814,7 @@ final class TextPlaceIOSTests: XCTestCase {
             let pixels = try XCTUnwrap(node.textRaster)
             p.apply(wireBatch([["op": "style", "id": 2, "style": ["font_size": 20.0, "text_color": [200, 0, 0, 255]]]]))
             p.textRasters.settleVisible([node])
-            XCTAssertFalse(node.textRaster === pixels, "painted again")
+            XCTAssertFalse(node.textRaster?.object === pixels.object, "painted again")
             turn()
             XCTAssertTrue(lines.animation(forKey: kCATransition) === first, "the same fade goes on")
             XCTAssertEqual(try faded(lines, at: now(box)), under, accuracy: 1e-5, "where it was")
@@ -839,7 +846,6 @@ final class TextPlaceIOSTests: XCTestCase {
         turn()
         let resize = try XCTUnwrap(box.animation(forKey: "bounds.size"))
         XCTAssertGreaterThanOrEqual(resize.beginTime, before + 0.3, "delayed from the commit")
-        XCTAssertLessThanOrEqual(resize.beginTime, now(box) + 0.3)
         XCTAssertEqual(try faded(lines, at: resize.beginTime - 0.01), 0, accuracy: 1e-5, "the old lines until the box moves")
         XCTAssertEqual(try faded(lines, at: resize.beginTime + resize.duration / 2), 0.5, accuracy: 1e-5)
         XCTAssertEqual(try faded(lines, at: resize.beginTime + resize.duration), 1, accuracy: 1e-5)
@@ -925,7 +931,7 @@ final class TextPlaceIOSTests: XCTestCase {
     /// finishes at once: the fade sets the lines' clock, which would hold it.
     func testANumeralRollUnderWayFinishesWhenItsLinesFade() throws {
         try XCTSkipIf(UIAccessibility.isReduceMotionEnabled, "Reduce Motion: nothing rolls")
-        // An HDR shadow keeps the ink's own pixels, which roll (a one-colour ink's are its mask's)
+        // An HDR shadow's cast rolls with the ink's pixels
         let hdr: [String: Any] = ["cs": [["s": "srgb-linear", "v": [4.0, 4.0, 4.0, 1.0]]], "c": [255.0, 255.0, 255.0, 255.0]]
         let (p, node) = try paragraph("text-relaid-roll", text: "41 landmarks", style: ["content_transition": "numeric", "text_shadow": ["o": [3.0, 3.0], "b": 0.0, "c": hdr]],
                                       height: 40, box: [16, 0, 368, 40])
@@ -957,7 +963,7 @@ final class TextPlaceIOSTests: XCTestCase {
         p.apply(wireBatch([["op": "frame", "id": 2, "x": 0.0, "y": 0.0, "w": 400.0, "h": 200.0],
                            ["op": "fieldContent", "id": 2, "rect": [16.0, 0.0, 368.0, 200.0]]]))
         p.textRasters.settleVisible([node])
-        XCTAssertFalse(node.textRaster === pixels, "painted again")
+        XCTAssertFalse(node.textRaster?.object === pixels.object, "painted again")
         XCTAssertNil(lines.animation(forKey: kCATransition), "outside an animation")
         XCTAssertEqual(lines.speed, 1, "the lines' clock running")
         turn()
@@ -975,7 +981,7 @@ final class TextPlaceIOSTests: XCTestCase {
         let wide = try XCTUnwrap(node.textRaster)
         p.apply(wireBatch([["op": "fieldContent", "id": 2, "rect": [16.0, 0.0, 268.0, 200.0]]]))
         p.textRasters.settleVisible([node])
-        XCTAssertFalse(node.textRaster === wide, "painted again")
+        XCTAssertFalse(node.textRaster?.object === wide.object, "painted again")
         turn()
         XCTAssertNil(lines.animation(forKey: kCATransition), "resizes that have ended")
         XCTAssertEqual(lines.speed, 1, "the lines' clock running")

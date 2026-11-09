@@ -1,5 +1,5 @@
-// The app is the wasm; this is its DOM host.
-import { sheetLeaves, liveById, sourceField, popoverCommand, contextAt, grantOrigins, createGrantSet, grantError, rawGrantText, scopedGrantSet, deferredFulfill, refusal, commitGuestOrigin, guestMessageAuthorized, pageGivenFiles, focusController, runFocusCommands, controlEvent, environment, preferences, onPreferences, inertAncestor, modalLayers, editMenu, navigation, afterPaintPieces, afterPaint, presenceLoader, animationClock, scrollFollowers, renderMarkup, navigableURL, navigates, refuseURL, frameURL, dataURL, devFirst, reportPlace, reportTime, launchLocation, pageReporter, appRootFontSize, valuedControl, typedControl, settleValue, foldBits, foldEnv, onFold, preferFold, fold, animationClocks, onSelection, noteFit, refitTexts, pageTitle, pageStore, routeFlags } from "./navigation.js";
+// the app is the wasm; this is its DOM host.
+import { listItem, syncListItemRoles, sheetLeaves, liveById, sourceField, popoverCommand, contextAt, grantOrigins, createGrantSet, grantError, rawGrantText, scopedGrantSet, deferredFulfill, refusal, commitGuestOrigin, guestMessageAuthorized, pageGivenFiles, focusController, runFocusCommands, controlEvent, environment, preferences, onPreferences, inertAncestor, modalLayers, editMenu, navigation, afterPaintPieces, afterPaint, presenceLoader, animationClock, scrollFollowers, renderMarkup, navigableURL, navigates, refuseURL, frameURL, dataURL, devFirst, reportPlace, reportTime, launchLocation, pageReporter, appRootFontSize, valuedControl, typedControl, settleValue, foldBits, foldEnv, onFold, preferFold, fold, animationClocks, onSelection, noteFit, refitTexts, pageTitle, pageStore, routeFlags } from "./navigation.js";
 let guestOutline, guestTap, guestType, reveal, backButton, viewBox, layoutBoxes, scrollRange, selectAll, typeControl, glidesSettled, scrollsSeen, agentInputLoading;
 const AGENT_ADMITTED = true; // false in a production bake: host/web/build.mjs rewrites this line
 let httpModule, pickerModule, documentsModule, frameModule, frameNavigation; const frameNav = () => frameNavigation ??= loadAfterPaint('./frame-navigation.js', 'frameNavigation'); // frameNavigation: an iframe's navigation records and commands; the file picker and documents, loaded on first use
@@ -390,7 +390,8 @@ function refreshSymbols() {
   }
   // Sources can set intrinsic size synchronously; percentage padding must resolve against the resulting layout.
   const fits = configs.map(({ el, point, objectFit }) => {
-    const cs = getComputedStyle(el), fits = point <= el.clientWidth - (parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)) && point <= el.clientHeight - (parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom));
+    const cs = objectFit === "scale-down" ? getComputedStyle(el) : null;
+    const fits = cs && point <= el.clientWidth - (parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)) && point <= el.clientHeight - (parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom));
     // `fill`, CSS's initial `object-fit`, keeps a symbol's aspect, as on the Apple hosts.
     return [el, objectFit === "none" || (objectFit === "scale-down" && fits) ? `${point}px ${point}px` : objectFit === "scale-down" || objectFit === "fill" ? "contain" : objectFit];
   });
@@ -636,7 +637,7 @@ function apply(batch) {
       }
       case "props": {
         const el = viewFor("props", op.id);
-        if (el) { applyProps(el, op.set, op.clear); if (el.hasAttribute("data-time-reservation") || el.exactLiveTime) loadLiveTime(el); }
+        if (el) { applyProps(el, op.set, op.clear); if (op.set?.role !== undefined || op.clear?.includes("role")) syncListItemRoles(el); else if ((op.set?.popover !== undefined || op.clear?.includes("popover")) && el.parentElement?.hasAttribute("data-exact-list-item")) listItem(el); if (el.hasAttribute("data-time-reservation") || el.exactLiveTime) loadLiveTime(el); }
         break;
       }
       case "style": {
@@ -650,7 +651,7 @@ function apply(batch) {
         const want = [];
         for (const id of op.ids) {
           const child = viewFor("children", id);
-          if (child) want.push(child);
+          if (child) want.push(el.hasAttribute("data-exact-list") && !lists.has(el) ? listItem(child, el) : child);
         }
         // Reorder in place: keyed rows keep their elements (and their state).
         // A canvas's surface element is skipped: not a child, never removed.
@@ -782,8 +783,8 @@ function apply(batch) {
         else if (op.name === "fastSeek" || op.name === "load") { const el = [...views.values()].find(el => el.id === op.args?.[0]), queue = () => ((el.exactMedia ??= { props: {}, handlers: [] }).commands ??= []).push([op.name, op.args?.[1]]); if (!(el instanceof HTMLMediaElement)) log(`${op.name} "${op.args?.[0]}" refused: ${el ? "not a video or audio" : "no live node with that id"}`); else if (op.name === "load" && el["exactApp-src"]) appSource(el, "src", el["exactApp-src"], queue); else { queue(); syncMedia(el); } } // a media element's, by HTML's method names: queued for media-glue.js `run`; a `load` of an `app:/` source resolves the file again first
         else if (op.name === "format") { const owner = incarnation, run = () => { const el = [...views.values()].find(el => el.id === op.args?.[0]); if (inputReady && incarnation === owner) el?.exactMarkup?.format(op.args[1], op.args[2] ?? ''); }; if (markupModule) markupModule.then(run); else run(); }
         else if (op.name === "openURL") {
-          if (op.args?.length !== 1 || typeof op.args[0] !== "string") console.error("exact: openURL requires one string");
-          else try { const target = navigableURL(new URL(op.args[0]).href); if (!target) throw Error("unsupported external URL scheme"); window.open(target, "_blank", "noopener,noreferrer"); } catch (error) { console.error("exact: openURL refused", String(error)); }
+          let opened = false; const answer = op.args?.[1], asked = incarnation; if (!op.args?.length || op.args.length > 2 || typeof op.args[0] !== "string") console.error("exact: openURL requires a string, then optionally an element id"); // `change` at the element named second hears `opened` (handed to the browser) or `failed`, after the batch
+          else try { const target = navigableURL(new URL(op.args[0]).href); if (!target) throw Error("unsupported external URL scheme"); window.open(target, "_blank", "noopener,noreferrer"); opened = true; } catch (error) { console.error("exact: openURL refused", String(error)); } if (typeof answer === "string") queueMicrotask(() => { const view = [...views].find(([, el]) => el.id === answer)?.[0]; if (incarnation === asked && view != null) send(wasm.exact_dispatch(view, 1, writeIn(opened ? "opened" : "failed"), now())); });
         }
         else if (op.name === "copyText") {
           if (op.args?.length !== 1 || typeof op.args[0] !== "string") {
@@ -814,7 +815,7 @@ function apply(batch) {
           else if (ruling.present) navigator.share(Object.fromEntries(Object.entries({ title, text, url }).filter(([, v]) => v != null)))
             .then(() => "share: shared", e => e?.name === "AbortError" ? "share: dismissed" : `share: refused: ${e?.name ?? e}`).then(log);
         }
-        else if (/^(navigate|traverseHistory|stopLoading|captureScreenshot)$/.test(op.name) || op.name === "reload" && op.args?.[0] != null) frameNav().then(m => m.command(op.name, op.args ?? [], log, [...views.values()].filter(e => e instanceof HTMLIFrameElement && !retiredViews.has(e)))); /* a frame's */ else if (op.name === "openDevTools") log(`openDevTools("${op.args?.[0]}") refused: a page cannot open the browser's developer tools; open them from the browser's menu`); /* a frame's inspector */ else if (/^(start|stop)Trace_EXPERIMENTAL$/.test(op.name)) log(`${op.name} refused: the web host does not record traces; use the browser's performance panel`); /* the Apple hosts' */ else if (!/^(playSound|playSounds|stopSounds|sendMIDI|requestMIDIAccess)$/.test(op.name)) console.warn(`exact: unknown command ${op.name}`); // the voice table's and the MIDI queue's are the runner's own, played from its `sound` and `midi` ops
+        else if (/^(navigate|traverseHistory|stopLoading|captureScreenshot)$/.test(op.name) || op.name === "reload" && op.args?.[0] != null) frameNav().then(m => m.command(op.name, op.args ?? [], log, [...views.values()].filter(e => e instanceof HTMLIFrameElement && !retiredViews.has(e)))); /* a frame's */ else if (op.name === "openDevTools") log(`openDevTools("${op.args?.[0]}") refused: a page cannot open the browser's developer tools; open them from the browser's menu`); /* a frame's inspector (D11) */ else if (/^(start|stop)Trace_EXPERIMENTAL$/.test(op.name)) log(`${op.name} refused: the web host does not record traces; use the browser's performance panel`); /* the Apple hosts' */ else if (op.name === "exitFullscreen") { if (document.fullscreenElement) document.exitFullscreen().catch(e => log(`exitFullscreen: refused: ${e.name}`)); } else if (op.name === "setWindowOpacity") log("setWindowOpacity refused: a page cannot change its window's opacity"); else if (!/^(playSound|playSounds|stopSounds|sendMIDI|requestMIDIAccess)$/.test(op.name)) console.warn(`exact: unknown command ${op.name}`); // the voice table's and the MIDI queue's are the runner's own, played from its `sound` and `midi` ops
         break;
       }
       case "destroy": {
@@ -1258,7 +1259,7 @@ let ticker = null, timerFactory = null, toldOffset = null;
 const followOffset = at => { const [epoch, offset] = reportTime(at); if (wasm.exact_set_time && offset !== toldOffset) { toldOffset = offset; applyBatch(JSON.parse(readOut(wasm.exact_set_time(epoch, offset)))); } };
 function startClock() {
   if (timerFactory && !agentMode && !textflow && !flowLoading) {
-    ticker ??= timerFactory({ now, advance: time => { followOffset(time); send(wasm.exact_advance(time, 0)); }, present, release: (kinds, cutoff) => { const batch = JSON.parse(readOut(wasm.exact_advance(cutoff, 16 | kinds << 8))); applyBatch(batch); return batch; } }); ticker.update(flowDue, flowFrames, flowWaits, flowTolerance);
+    ticker ??= timerFactory({ now, scrollPending: () => collections.scrollPending(), advance: time => { followOffset(time); send(wasm.exact_advance(time, 0)); }, present, release: (kinds, cutoff) => { const batch = JSON.parse(readOut(wasm.exact_advance(cutoff, 16 | kinds << 8))); applyBatch(batch); return batch; } }); ticker.update(flowDue, flowFrames, flowWaits, flowTolerance);
   }
 }
 function activateData() {

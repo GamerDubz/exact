@@ -4,6 +4,19 @@ import UIKit
 
 // Keep the detail button while UIKit refreshes the cell for accessibility.
 final class GroupedCell: UICollectionViewListCell {
+    private var activeBounds = CGRect.null
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard bounds != activeBounds else { return }
+        activeBounds = bounds
+        if layer.animation(forKey: "nativeActiveScale") != nil { setNeedsUpdateConfiguration() }
+    }
+    var forcedPressed = false { didSet { if forcedPressed != oldValue { setNeedsUpdateConfiguration() } } }
+    override var configurationState: UICellConfigurationState {
+        var state = super.configurationState
+        state.isHighlighted = state.isHighlighted || forcedPressed
+        return state
+    }
     #if os(iOS)
     weak var menuSource: NodeView?
     private var detailButton: UIButton?
@@ -50,8 +63,16 @@ final class GroupedCell: UICollectionViewListCell {
     }
     func redrawPath() {
         guard let pathSymbol, var c = contentConfiguration as? UIListContentConfiguration else { return }
-        c.image = FaceSymbol.image(pathSymbol, points: Self.pathPoints(traitCollection))
+        c.image = inked(FaceSymbol.image(pathSymbol, points: Self.pathPoints(traitCollection)))
         contentConfiguration = c
+    }
+    /// The colour of its own its standard row's image is drawn in, nil for the cell's tint, which
+    /// UIKit draws a cell's image in and greys behind a sheet or an alert
+    var imageInk: UIColor?
+    /// `image` drawn in `imageInk`, which UIKit draws as it is (`.alwaysOriginal`), dynamic colours
+    /// per trait; else as it is, for the cell's tint
+    func inked(_ image: UIImage?) -> UIImage? {
+        imageInk.flatMap { ink in image?.withTintColor(ink, renderingMode: .alwaysOriginal) } ?? image
     }
     /// Its standard row's content. UIKit's list content view hides a label
     /// a new configuration drops but keeps its text, which UIKit's

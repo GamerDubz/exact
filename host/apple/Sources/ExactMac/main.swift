@@ -10,6 +10,7 @@
 import AppKit
 import ExactKit
 import ExactComposition
+import ExactLaunchParts
 
 ProcessRelaunch.waitIfRequested()
 
@@ -90,10 +91,16 @@ final class Adapter: ExactSessionDelegate {
             case "light": app.appearance = NSAppearance(named: .aqua)
             default: app.appearance = nil
             }
-        case "openURL": open(args.first as? String ?? "", from: session)
-        // `window.close()`: the window this session
+        case "openURL": open(args.first as? String ?? "", from: session) { session.answerOpenURL(args, opened: $0) }
+        // `window.close()` (studio diary R17): the window this session
         // shows, without asking its `beforeunload` again.
         case "close": windows.first { $0.session === session }?.close()
+        // A quit the app holds: its window leaves full screen
+        // and fades before the quit, `ExactWindowCommands`.
+        case "exitFullscreen", "setWindowOpacity":
+            guard let window = windows.first(where: { $0.session === session })?.window else { return }
+            if agentMode { session.log("\(name)\(args.isEmpty ? "" : " \(args[0])")") }
+            _ = ExactWindowCommands.perform(name, args, on: window, log: session.log)
         // Bare `focus()`, as the web's `window.focus()`: the
         // session's window shown if hidden, brought forward, and the app asks
         // to be activated, which macOS 14's cooperative activation decides.
@@ -114,34 +121,38 @@ final class Adapter: ExactSessionDelegate {
     /// the app declares (`open_url.schemes`, OpenURL.swift) to what Launch
     /// Services registered for it. Nothing else opens: a link comes out of a
     /// document this app did not write, and handing an arbitrary scheme to
-    /// Launch Services is handing it whatever is registered for that scheme
-    /// (fail closed, loudly).
-    private func open(_ target: String, from session: ExactSession) {
-        guard !target.isEmpty else { return }
+    /// Launch Services is handing it whatever is registered for that scheme.
+    /// `answer` hears whether it opened,
+    /// or, where the agent's drive only journals the open, whether an app
+    /// is registered for it.
+    private func open(_ target: String, from session: ExactSession, answer: @escaping (Bool) -> Void) {
+        let registered = { (url: URL) in NSWorkspace.shared.urlForApplication(toOpen: url) != nil }
+        guard !target.isEmpty else { return answer(false) }
         // A link beside a document the person chose.
-        if target.hasPrefix("doc:/") { ExactDocuments.deliver([target], to: session); return }
+        if target.hasPrefix("doc:/") { ExactDocuments.deliver([target], to: session); return answer(true) }
         // The app's settings: macOS has no page per app, so
         // Privacy & Security's Location Services, the one permission a module
         // asks for today. Under the agent, journaled only.
         if target == "app-settings:" {
             let pane = "x-apple.systempreferences:com.apple.preference.security?Privacy_LocationServices"
             session.log("openURL app-settings: opens \(pane)\(agentMode ? " (not under the agent)" : "")")
-            if !agentMode, let url = URL(string: pane) { NSWorkspace.shared.open(url) }
-            return
+            guard let url = URL(string: pane) else { return answer(false) }
+            return answer(agentMode ? registered(url) : NSWorkspace.shared.open(url))
         }
         let url = URL(string: target)
         let local = url?.isFileURL == true ? url!.standardizedFileURL.path
             : target.hasPrefix("/") ? URL(fileURLWithPath: target).standardizedFileURL.path : nil
         if let local, FileManager.default.fileExists(atPath: local) {
             ExactDocuments.deliver([local], to: session, keep: false)
-            return
+            return answer(true)
         }
-        if let url, session.openDeclaredScheme(url, open: { url, done in done(NSWorkspace.shared.open(url)) }) { return }
+        if let url, session.openDeclaredScheme(url, open: { url, done in done(NSWorkspace.shared.open(url)) },
+                                               registered: registered, answer: answer) { return }
         guard let url, ["http", "https", "mailto"].contains(url.scheme?.lowercased() ?? "") else {
             FileHandle.standardError.write(Data("exact: refused to open \(target)\n".utf8))
-            return
+            return answer(false)
         }
-        NSWorkspace.shared.open(url)
+        answer(NSWorkspace.shared.open(url))
     }
 }
 let adapter = Adapter()
@@ -192,6 +203,11 @@ func footprint() -> UInt64 {
 final class ExactWindow: NSWindow {
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         agentMode ? frameRect : super.constrainFrameRect(frameRect, to: screen)
+    }
+    /// A navigation is timed from its input: a mouse-up or key press.
+    override func sendEvent(_ event: NSEvent) {
+        super.sendEvent(event)
+        if [.leftMouseUp, .keyDown].contains(event.type) { ExactLaunch.shared.input(at: event.timestamp) }
     }
 }
 
@@ -439,6 +455,7 @@ final class DocumentWindow: NSObject, NSWindowDelegate {
             "session": label, "title": window.title, "document": document ?? NSNull(),
             "edited": window.isDocumentEdited, "representedURL": window.representedURL?.path ?? NSNull(),
             "key": window.isKeyWindow, "visible": window.isVisible, "tabs":window.tabbedWindows?.count ?? 1,
+            "fullScreen": window.styleMask.contains(.fullScreen), "opacity": Double(window.alphaValue),
             "footprintBefore": footprintBefore,
         ]
         // The first window's is from the process's start (what `metrics`
@@ -632,6 +649,11 @@ final class Delegate: NSObject, NSApplicationDelegate {
         ExactContentIndex.open(location)
         return true
     }
+    override init() {
+        ExactLaunch.shared.delegateInit()
+        ExactLaunch.shared.runLaunchParts(ExactLaunchParts.all)
+        super.init()
+    }
     /// A one-window app quits with its window; one whose documents each
     /// get a window (`navigate-new`) stays, as a Mac
     /// document app does, for File ▸ New Window, Open and the Dock.
@@ -704,6 +726,9 @@ final class Delegate: NSObject, NSApplicationDelegate {
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         ExactEnv.stamp("didFinishLaunching")
+        // The session already exists and AppKit boots it inside this
+        // callback, so launch is measured to this point.
+        ExactLaunch.shared.didFinishLaunching(hidden: NSApp.isHidden)
         finishLaunching()
     }
     /// Launch Services brought something: a development link, or documents —
@@ -878,6 +903,7 @@ func finishLaunching() {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             print("painted \(session.firstDrawMs.map { String(format: "%.1f", $0) } ?? "?") ms")
             print("stamps: " + ExactEnv.stamps.map { "\($0.0) \(String(format: "%.1f", $0.1))" }.joined(separator: " · ") + " · first layout \(session.firstLayoutMs.map { String(format: "%.1f", $0) } ?? "?") · first draw \(session.firstDrawMs.map { String(format: "%.1f", $0) } ?? "?")")
+            print("observe: \(ExactLaunch.shared.smokeLine())")
             print("gpu: \(session.gpuStatus)")
             print("web: \(session.webStatus)")
             print("smoke ok")

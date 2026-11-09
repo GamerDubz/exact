@@ -1,11 +1,14 @@
-// Inspect mode and the agent's private API are compiled out of a production bake:
-// `bun test host/apple/inspect-gate.test.mjs`; an ignored test in
-// host/apple/tests/it/development.rs runs it too. Package.swift defines `EXACT_INSPECT` for every
-// trust policy but production, and every Swift line naming inspect mode's types or the agent's
-// private calls is inside an `#if` on it, so a production build compiles none of it. Shipped code
-// reads no undocumented defaults key, notification or string table. A production Mac bake on disk
-// (from `EXACT_UPDATE_TRUST=production bun host/apple/build.mjs theme-fixture-apple`) is checked
-// for their strings too.
+// Inspect mode and the agent's private API are compiled out of a production
+// bake:
+// `bun test host/apple/inspect-gate.test.mjs`; an ignored test runs it
+// (host/apple/tests/it/development.rs). Package.swift
+// defines `EXACT_INSPECT` for every trust policy but production, and every
+// Swift line naming inspect mode's types or the agent's private calls is
+// inside an `#if` on it, so a production build compiles none of it. Shipped
+// code reads no undocumented defaults key, notification or string table. A
+// production Mac bake on disk (from
+// `EXACT_UPDATE_TRUST=production bun host/apple/build.mjs theme-fixture-apple`)
+// is checked for their strings too.
 import { test, expect } from 'bun:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';

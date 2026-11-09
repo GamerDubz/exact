@@ -66,7 +66,7 @@ pub use contract_types::strings::Strings;
 /// The data seam, re-exported for an app's build script: the bake asks the
 /// crate its grants for the compatibility id (`Caltrain.grants()`).
 pub use exact_runner::DataSource;
-pub use logic::{apple_linked, rust_entry, web_linked, web_rust_mode};
+pub use logic::{apple_linked, linux_entry, rust_entry, web_linked, web_rust_mode};
 pub use manifest::{Activity, Manifest, Widget};
 pub use map::{plan_digest, SourceMap};
 pub use module_rust::module_rust;
@@ -1123,7 +1123,12 @@ pub fn bake<D: DataSource>(mut plan: Plan, data: D) -> Result<Plan, BakeError> {
     let mut b = PlanBuilder::from_plan(plan);
     let pending: Vec<String> = runner.pending().into_iter().map(|(n, _)| n).collect();
     let dated = runner.resources_reading_clock();
-    for i in 0..runner.plan().resources.len() {
+    // A resource over a list compiles nothing: its elements are the
+    // launch's to ask, and they follow the plan's rows.
+    for i in 0..runner.declared_resources().len() {
+        if runner.plan().resources[i].each.len != 0 {
+            continue;
+        }
         let name = runner
             .plan()
             .str(runner.plan().resources[i].name)

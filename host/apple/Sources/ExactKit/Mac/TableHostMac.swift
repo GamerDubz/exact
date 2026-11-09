@@ -37,7 +37,7 @@ final class TableHost {
             let point = content.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
             guard let table = content.hitTest(point) as? RunnerTableView, let feed = table.feed,
                   let row = feed.row(at: table.row(at: table.convert(event.locationInWindow, from: nil))),
-                  let node = feed.pressing(row), node.authorsPress, !node.disabled, !node.inert else { return }
+                  let node = feed.pressing(row), !node.disabled, !node.inert else { return }
             pressContact = PressNode(node, bubbled: false)
             node.pressed = true
             pressCell = table.rowView(atRow: row.index, makeIfNecessary: false)?.view(atColumn: 0) as? TableRowCell
@@ -184,7 +184,7 @@ final class TableHost {
                 lines[row.id] = line
                 needed.insert(row.id)
                 if line.superlayer !== layer { layer.addSublayer(line) }
-                let scale = row.window?.backingScaleFactor ?? 1
+                let scale = row.pixelScale ?? 1
                 let bottom = (row.bounds.maxY * scale).rounded() / scale
                 // The measured AppKit line is one point, ending at the row's
                 // bottom; the trailing cell inset is sixteen points.

@@ -23,6 +23,7 @@ mod module_work;
 mod trace;
 pub use field::{FieldSelection, InputDetails, SelectionDirection};
 mod host_kinds;
+pub use host_kinds::HistorySwipe;
 mod pointer;
 pub use pointer::{AtomEvent, DropEvent, MouseEvent, PointerEvent, WheelEvent};
 mod intersect;
@@ -79,6 +80,7 @@ pub use device_links::{AuthLinks, DeviceLinks, PickerLinks};
 pub mod picker;
 pub use picker::{Picked, PickerRequest, PICKED};
 mod dated;
+mod each;
 mod fragments;
 mod gates;
 mod waits;
@@ -92,6 +94,7 @@ mod kept_tests;
 mod lines;
 mod lists;
 mod media_session;
+pub mod outstanding;
 mod overrun;
 mod page;
 mod perf;
@@ -337,6 +340,8 @@ pub struct Runner<D: DataSource> {
     derives: Vec<Option<Value>>,
     resources: Vec<Option<ResourceState>>,
     resource_values: Vec<Option<crate::held::Held>>,
+    /// The elements' requests of resources over lists, as rows after the plan's.
+    members: each::Members,
     tree: Option<Tree>,
     reorder_owner: Option<exact_kernel::NodeKey>,
     reorder_ops: Vec<exact_kernel::Op>,
@@ -785,6 +790,7 @@ impl<D: DataSource> Runner<D> {
             derives: Vec::new(),
             resources: Vec::new(),
             resource_values: Vec::new(),
+            members: Default::default(),
             tree: None,
             reorder_owner: None,
             reorder_ops: Vec::new(),

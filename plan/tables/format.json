@@ -221,7 +221,12 @@
         {
           "name": "placeholder_value",
           "codec": "bytes",
-          "_comment": "A declared `else empty(field=value, …)`, the compiler's constant (a value), shown while nothing is kept and the source has not answered. Empty bytes: none — an undeclared placeholder is the type's zero, which the runner computes."
+          "_comment": "A declared `else empty(field=value, …)`, the compiler's constant (a value), shown while nothing is kept and the source has not answered. Empty bytes: none — an undeclared placeholder is the type's zero, which the runner computes (D1)."
+        },
+        {
+          "name": "each",
+          "codec": "range:args",
+          "_comment": "c (amended 2026-11-04): empty for one request; for `resource r = source(args) for x in list [key=k] as shape S`, two entries: the list, read as a derive is, then the key, which reads the element as its one parameter (the element itself when no `key=` is written). `args` then read the element as their one parameter too; the source is asked once for each element, keyed as a `for` row is; `ty` is `S[]`, and each request answers `S`."
         }
       ]
     },
@@ -1125,7 +1130,8 @@
       "userpromptopened",
       "enterpictureinpicture",
       "leavepictureinpicture",
-      "pictureinpictureerror"
+      "pictureinpictureerror",
+      "historyswipe"
     ]
   },
   "_opcodes": "The expression VM: a stack machine over values with a small locals stack (`BindLocal` pops into it, `LoadLocal` copies from it, `DropLocal` pops it) for names an inline `match` binds and the item and index a `Map`/`Filter` callback binds. Each opcode names its operand layout; the decoder validates framing and every index operand. `depth` operands count enclosing instance scopes (0 = innermost). Type inference guarantees stack discipline; the VM still traps, never UB.",

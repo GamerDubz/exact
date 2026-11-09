@@ -29,7 +29,10 @@ export const commands = (say, agentMode = () => false) => ({
   // the one scheme allowlist every navigation takes (navigation.js `navigableURL`),
   // or one of a scheme app.json's `open_url.schemes` declares (`exact.openSchemes`),
   // which the browser asks about before it hands it to the app registered for it.
-  openURL: u => {
+  // `change` at `id` hears `opened` for a URL handed to the browser, which says
+  // nothing of what then opened it (a `noopener` open returns null), and
+  // `failed` for one refused here; after the commands, as an event.
+  openURL: (u, id) => {
     let to = null, declared = false;
     try { const url = new URL(u); declared = declaredScheme(url.protocol); if (declared || ["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) to = url.href; } catch {}
     if (to && declared && agentMode()) say(`openURL ${to.slice(0, to.indexOf(":"))}: ${to.slice(0, 200)} (journaled, not opened under the agent)`);
@@ -37,6 +40,7 @@ export const commands = (say, agentMode = () => false) => ({
     // The app's own settings page: a browser has none to open.
     else if (u === "app-settings:") say("openURL refused: app-settings: has no page on the web; a site's permissions are the browser's own (its address bar, its settings)");
     else say(`openURL refused: ${JSON.stringify(String(u).slice(0, 80))} is not an absolute http, https, mailto or tel URL, nor of a scheme app.json's open_url.schemes declares`);
+    if (id != null) queueMicrotask(() => liveById(String(id))?.dispatchEvent(new CustomEvent("change", { detail: to ? "opened" : "failed" })));
   },
   // The inverse of `message=`: text into the named surface, every post in
   // order, held until the GPU glue loads and drains `pendingPosts`
@@ -54,9 +58,14 @@ export const commands = (say, agentMode = () => false) => ({
   // follow it; checked here, where no runner checked it first.
   // (A size the app may not set is no choice: the last one stands, and the call refuses as ever.)
   setRootFontSize: v => v === "medium" || (typeof v === "number" && Math.fround(v) > 0 && Number.isFinite(Math.fround(v))) || (typeof v === "string" && /^[+-]?(\d+|\d*\.\d+)(e[+-]?\d+)?%$/i.test(v) && ((h) => Math.fround(parseFloat(v) / 100 * h) > 0 && Number.isFinite(Math.fround(parseFloat(v) / 100 * h)))(parseFloat(getComputedStyle(document.documentElement).fontSize) || 16)) ? asked('rootFontSize', v, () => appRootFontSize(v, say)) : appRootFontSize(v, say),
+  // The document's own full screen ends, as `document.exitFullscreen()`; a page cannot fade its window.
+  exitFullscreen: () => { if (document.fullscreenElement) document.exitFullscreen().catch(e => say(`exitFullscreen: refused: ${e.name}`)); },
+  setWindowOpacity: () => say("setWindowOpacity refused: a page cannot change its window's opacity"),
+  // A page cannot set the browser's zoom, which is the person's.
+  setPageZoom: () => say("setPageZoom refused: the browser's zoom is the person's; a page cannot set it"),
   // A recording of frames is the Apple hosts'; the browser's performance panel records the page.
   startTrace_EXPERIMENTAL: () => say("startTrace_EXPERIMENTAL refused: the web host does not record traces; use the browser's performance panel"),
-  stopTrace_EXPERIMENTAL: () => say("stopTrace_EXPERIMENTAL refused: the web host does not record traces"),
+  stopTrace_EXPERIMENTAL: () => say("stopTrace_EXPERIMENTAL refused: the web host does not record traces; use the browser's performance panel"),
   // The window's app modes: modes.js's, which an app with
   // axes loads; any other refuses it, as the runner does.
   setMode: (...args) => globalThis.exact?.modes ? globalThis.exact.modes.command(args) : say(`setMode(${args.map(x => JSON.stringify(x)).join(", ")}) refused: an axis of the app's design and one of its values`),
@@ -92,7 +101,7 @@ export const commands = (say, agentMode = () => false) => ({
   fastSeek: (id, seconds) => media(say, id, "fastSeek", seconds),
   load: id => media(say, id, "load"),
   // An image's pictures in the browser's floating window (picture-in-picture.js).
-  requestPictureInPicture: id => { const e = liveById(String(id ?? "")); import("./picture-in-picture.js").then(m => m.float(e, id, say)); },
+  requestPictureInPicture: (id, presentation, title, width, height) => { const e = liveById(String(id ?? "")); import("./picture-in-picture.js").then(m => m.float(e, id, say, { presentation, title, width, height })); },
   exitPictureInPicture: () => import("./picture-in-picture.js").then(m => m.exit(say)),
 });
 function frame(say, name, args) {

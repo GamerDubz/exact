@@ -24,8 +24,11 @@ extension NodeView {
     /// already (`layoutField`).
     func nativeEditorRect(in proposed: NSRect) -> NSRect? {
         guard isNativeTextControl, let rect = kernelContentBox else { return nil }
+        // Layout's insets less what the drawn box lost to the pixel grid, so
+        // the text keeps layout's width (`PixelGridMac.swift`).
         let content = proposed.insetBy(left: rect.minX, top: rect.minY,
-            right: max(0, bounds.width - rect.maxX), bottom: max(0, bounds.height - rect.maxY))
+            right: max(0, layoutBounds.width - rect.maxX) + bounds.width - layoutBounds.width,
+            bottom: max(0, layoutBounds.height - rect.maxY) + bounds.height - layoutBounds.height)
         let line = field?.font.map { cssLine(in: content, font: $0) } ?? content
         return fieldInCell ? line : line.insetBy(dx: -Self.editorPadding, dy: 0)
     }
@@ -41,10 +44,12 @@ extension NodeView {
     /// glyphs to stand where CSS puts them. CSS centres the line box in the
     /// content box (Chrome's inner editor) and puts the baseline half the
     /// leading below the line box's top; the cell draws its line at the
-    /// rect's top, the baseline the font's ascent below it (the field is
-    /// flipped).
+    /// rect's top, the baseline the font's ascent, rounded to a point,
+    /// below it (the field is flipped). The line box rounds in the window's
+    /// device pixels, as a textarea's and a paragraph's do, so
+    /// at 2x the baseline, and the rect's top, can be on a half point.
     func cssLine(in box: NSRect, font: NSFont) -> NSRect {
-        let (above, below) = CSSLineBox.extents(font as CTFont, height: usedLineHeight)
+        let (above, below) = CSSLineBox.extents(font as CTFont, height: usedLineHeight, scale: pixelScale ?? 1)
         let baseline = box.minY + (box.height - above - below) / 2 + above
         let top = max(box.minY, baseline - CSSLineBox.content(font as CTFont).0)
         return NSRect(x: box.minX, y: top, width: box.width, height: max(0, min(box.maxY, baseline + below) - top))
@@ -110,6 +115,7 @@ extension NodeView {
         }
         if let editor = field.currentEditor() as? NSTextView { styleFieldEditor(editor) }
         applyPlaceholder(field)
+        field.needsDisplay = true // its cell reads `-webkit-font-smoothing` as it draws
         layoutField()
     }
     /// The field's own alignment and base direction, set once no editor has
@@ -159,6 +165,7 @@ extension NodeView {
     }
     func styleFieldEditor(_ editor: NSTextView) {
         editor.insertionPointColor = caretColor
+        editor.drawAntialiased(drawsAntialiased)
         if isNativeTextControl, !editor.hasMarkedText() {
             let attributes = fieldTextAttributes
             editor.textStorage?.addAttributes(attributes, range: NSRange(location: 0, length: editor.string.utf16.count))
@@ -189,7 +196,7 @@ extension NodeView {
 final class TextAreaScroll: NSScrollView {
     weak var owner: NodeView?
     override var focusRingMaskBounds: NSRect {
-        owner?.isNativeTextControl == true && window?.firstResponder === documentView ? bounds : .zero
+        uncovered(owner?.isNativeTextControl == true && window?.firstResponder === documentView ? bounds : .zero)
     }
     override func drawFocusRingMask() {
         if !focusRingMaskBounds.isEmpty { NSBezierPath(rect: bounds).fill() }
@@ -237,6 +244,9 @@ final class SearchFieldCell: NSSearchFieldCell {
     }
     override func searchTextRect(forBounds rect: NSRect) -> NSRect {
         (controlView?.superview as? NodeView)?.nativeEditorRect(in: rect) ?? super.searchTextRect(forBounds: rect)
+    }
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        drawingAntialiased(node?.drawsAntialiased == true) { super.drawInterior(withFrame: cellFrame, in: controlView) }
     }
     private var node: NodeView? { (controlView as? NSTextField)?.delegate as? NodeView }
     override func accessibilityAttributeNames() -> [NSAccessibility.Attribute] {

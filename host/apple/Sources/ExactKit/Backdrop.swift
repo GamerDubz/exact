@@ -14,7 +14,8 @@
 // paints. Both are declared: a backdrop
 // node clips its children to its border box, and paint above its parent
 // shows through unblurred. The node's own background and border draw over
-// the blur, as CSS orders them.
+// the blur, as CSS orders them; its outer shadows cast from a layer beside
+// its own, which the mask would clip (`Mac/BackdropShadowMac.swift`).
 //
 // iOS has no public arbitrary-radius backdrop blur (`backgroundFilters` is
 // macOS-only and `CABackdropLayer` is private), so a blur maps to the
@@ -281,10 +282,11 @@ extension NodeView {
     /// The layer's backdrop blur, or none; a material (`backgroundMaterial`)
     /// takes the node's backdrop instead.
     func applyBackdrop() {
+        backdropCoverChanged() // a ring it covers goes (`Mac/BackdropCoverMac.swift`)
         guard let l = layer else { return }
         let operations = !cssVisibilityHidden && materialView == nil && props["backgroundMaterial"] == nil ? backdropOperations : []
         guard !operations.isEmpty else {
-            if l.backgroundFilters != nil { l.backgroundFilters = nil; backdropDrawn = nil; syncEllipticalClip() }
+            if l.backgroundFilters != nil { l.backgroundFilters = nil; backdropDrawn = nil; syncEllipticalClip(); syncShadowStand() }
             return
         }
         if !layerUsesCoreImageFilters { layerUsesCoreImageFilters = true }
@@ -312,6 +314,9 @@ extension NodeView {
         let radius = radii.allSatisfy { $0.width == $0.height } ? radii.map(\.width).min() ?? 0 : 0
         if l.cornerRadius != radius { l.cornerRadius = radius }
         syncEllipticalClip()
+        // The mask would clip the outer shadows: they cast beside the layer,
+        // which they follow as it moves (`BackdropShadowMac.swift`).
+        syncShadowStand()
     }
 }
 

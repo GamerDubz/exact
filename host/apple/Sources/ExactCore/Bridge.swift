@@ -435,6 +435,12 @@ package final class Runtime {
         }
     }
     package func swiperight(_ view: UInt32, now: Double) -> Batch { on { read(exact_dispatch(rt, view, 12, 0, now)) } }
+    /// The history swipe the Mac tracks: its phase,
+    /// `back` or `forward`, how far along that way (0 or more), and where
+    /// the pointer was as it began, in the viewport.
+    package func historySwipe(_ view: UInt32, phase: String, direction: String, amount: Double, client: CGPoint, now: Double) -> Batch {
+        on { read(exact_dispatch(rt, view, 60, write("\(phase),\(direction),\(amount),\(Double(client.x)),\(Double(client.y))"), now)) }
+    }
     package func refresh(_ view: UInt32, now: Double) -> Batch { on { read(exact_dispatch(rt, view, 22, 0, now)) } }
     package func pan(_ view: UInt32, dx: Double, dy: Double, now: Double) -> Batch {
         return on {
@@ -787,7 +793,6 @@ package final class Runtime {
     /// Whether the running plan reads `onLine`; true when the owner is busy.
     package func readsOnLine() -> Bool { on(busy: true) { exact_reads_on_line(rt) != 0 } }
     package func setRootFontSize(_ px: Double) -> Batch { on { read(exact_set_root_font_size(rt, px)) } }
-    package func setRootFontZoom(_ factor: Double) -> Batch { on { read(exact_set_root_font_zoom(rt, factor)) } }
     /// A live design batch or snapshot frame, applied in place.
     package func designRows(_ frame: String) -> Batch { on { read(exact_design_rows(rt, write(frame))) } }
     /// The design digest the running app runs; nil before boot.

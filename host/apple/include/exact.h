@@ -276,7 +276,8 @@ typedef struct ExactMeasureRequest {
     uint8_t direction;     /* 0 ltr, 1 rtl */
     const ExactFlowShape *exclusions;
     size_t exclusion_count;
-    uint8_t markup;        /* 1: the one run is Markdown source; expand it with exact_markup_pieces */
+    uint8_t markup;        /* 1: the one run is Markdown source; expand it with exact_markup_pieces;
+                              2: it is a Markdown text area's value; lay it out as its editor does (exact_markup_style) */
     float text_indent;     /* CSS text-indent, points: the first line's inset from its start edge */
     uint8_t hyphens;       /* CSS hyphens: 0 manual (the initial value), 1 none (soft hyphens already arrive as U+034F), 2 auto */
     const uint8_t *lang;   /* the document language, UTF-8 (auto's hyphenation points); lang_len 0 is unknown */
@@ -400,6 +401,8 @@ typedef struct { float width, height; uint8_t provisional; } ExactButtonMeasure;
 typedef ExactButtonMeasure (*ExactButtonMeasureFn)(void *ctx, const ExactButtonMeasureRequest *request);
 void exact_set_button_measure(ExactRuntime rt, ExactButtonMeasureFn measure);
 uint32_t exact_control_text_changed(ExactRuntime rt);
+/* The text engine rounds line boxes to another scale; every paragraph is measured again. */
+uint32_t exact_text_scale_changed(ExactRuntime rt);
 
 typedef struct {
     double datetime, now, relative_value;
@@ -815,10 +818,7 @@ uint32_t exact_set_page(ExactRuntime rt, uint32_t bits);
 uint32_t exact_reads_on_line(ExactRuntime rt);
 /* The root font size `rem` follows, in points. */
 uint32_t exact_set_root_font_size(ExactRuntime rt, double px);
-/* The host's zoom over the root size, the app's own
- * included (the Mac's View ▸ Actual Size, Zoom In, Zoom Out); after boot. */
-uint32_t exact_set_root_font_zoom(ExactRuntime rt, double factor);
-/* Whether a confirmation's rows are an
+/* D13.4: whether a confirmation's rows are an
  * alert's (explanatory text, one cancel, at most three buttons): 1 or 0. The
  * kernel's rule, which lowering and the Linux host read too; needs no runtime. */
 uint32_t exact_confirmation_is_alert(uint32_t texts, uint32_t actions, uint32_t cancels);
@@ -1042,7 +1042,8 @@ void exact_on_presence_keychain(ExactPresenceKeychainFn keychain);
 /* Optional delivery composition. L=0 returns NULL: no store,
  * keys, selection, check or networking implementation is linked. The higher
  * update adapter supplies these calls only when the app chooses L=A. */
-typedef void (*ExactUpdateDoneFn)(void *ctx, const uint8_t *line, size_t len);
+/* A check's result as JSON: {"line": text, "download": {seq, files, ms, entry}?}. */
+typedef void (*ExactUpdateDoneFn)(void *ctx, const uint8_t *json, size_t len);
 typedef struct {
     uint8_t *(*input)(size_t len);
     const uint8_t *(*output)(void);

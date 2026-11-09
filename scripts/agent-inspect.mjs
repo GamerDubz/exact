@@ -234,6 +234,8 @@ const TABLE_ELEMENTS = /^(table|caption|thead|tbody|tfoot|tr|th|td|dl|dt|dd)$/;
  * authored frames times the factor, which no style asked for and none should undo. */
 export const scaledLines = (layout) => (layout?.scaled ?? []).map((p) =>
   `route ${p.route || '?'} is a ${p.presentation} the platform draws at ${p.scale} of its laid-out size: its boxes are the authored frames × ${p.scale}, not the app's doing`);
+/** The floating image's window on its `tree` row: its kind, title, frame on screen and controls. */
+export const pictureInPictureNote = (w) => w ? ` pictureInPicture{${w.presentation} ${JSON.stringify(w.title)} ${w.open ? 'open' : 'closed'} at ${(w.frame ?? []).join(',')} controls ${(w.controls ?? []).join(',')}${w.controlsShown ? ' shown' : ''}}` : '';
 export function render(op, r, how = {}) {
   if (op === 'ax' || (op === 'tree' && r.ax)) return renderAx(r);
   const q = JSON.stringify;
@@ -248,7 +250,7 @@ export function render(op, r, how = {}) {
       for (const n of r.nodes) {
         const depth = Math.max(0, n.depth - rootDepth);
         const p = n.props ?? {};
-        lines.push(`${'  '.repeat(depth)}${n.type}#${n.id}${TABLE_ELEMENTS.test(p.semanticTag ?? '') ? ` <${p.semanticTag}>` : ''}${p.testId != null ? ` [${p.testId}]` : ''}${p.hatch != null ? ` hatch=${q(p.hatch)}` : ''}${p.text != null ? ` ${q(p.text)}` : ''}${p.value != null ? ` value=${q(p.value)}` : ''}${p.accessibilityLabel != null ? ` label=${q(p.accessibilityLabel)}` : ''}${p.checked != null ? ` checked=${p.checked}` : ''}${n.focused ? " [focused]" : ""}${n.hidden ? " [hidden]" : n.inactive ? " [inactive]" : ""}${n.unshown ? " [not in the iOS bar: hidden in the app]" : ""}${n.world ? ` world{${n.world.name}} · ${n.world.entities} entities · tick ${n.world.tick}` : ""}${n.status != null ? ` status ${q(n.status)}` : ""}${n.handlers?.length ? ` (${n.handlers.join(', ')})` : ''}${n.url != null ? ` url=${q(n.url)} loading=${n.loading}` : ''}${n.partition != null ? ` partition=${q(n.partition)}` : ''}${n.navigation ? ` at=${q(n.navigation.url)} title=${q(n.navigation.title)}` : ''}`);
+        lines.push(`${'  '.repeat(depth)}${n.type}#${n.id}${TABLE_ELEMENTS.test(p.semanticTag ?? '') ? ` <${p.semanticTag}>` : ''}${p.testId != null ? ` [${p.testId}]` : ''}${p.hatch != null ? ` hatch=${q(p.hatch)}` : ''}${p.text != null ? ` ${q(p.text)}` : ''}${p.value != null ? ` value=${q(p.value)}` : ''}${p.accessibilityLabel != null ? ` label=${q(p.accessibilityLabel)}` : ''}${p.checked != null ? ` checked=${p.checked}` : ''}${n.focused ? " [focused]" : ""}${n.hidden ? " [hidden]" : n.inactive ? " [inactive]" : ""}${n.unshown ? " [not in the iOS bar: hidden in the app]" : ""}${n.world ? ` world{${n.world.name}} · ${n.world.entities} entities · tick ${n.world.tick}` : ""}${n.status != null ? ` status ${q(n.status)}` : ""}${n.handlers?.length ? ` (${n.handlers.join(', ')})` : ''}${n.url != null ? ` url=${q(n.url)} loading=${n.loading}` : ''}${n.partition != null ? ` partition=${q(n.partition)}` : ''}${n.navigation ? ` at=${q(n.navigation.url)} title=${q(n.navigation.title)}` : ''}${pictureInPictureNote(n.pictureInPicture)}`);
         for (const g of n.guest ?? []) lines.push(`${'  '.repeat(depth + g.depth + 1)}[guest] ${g.tag}${g.id != null ? `#${g.id}` : ''}${g.testId != null ? ` [${g.testId}]` : ''}${g.text != null ? ` ${q(g.text)}` : ''}`);
       }
       return lines.join('\n');
@@ -736,7 +738,7 @@ export function renderPerf(r) {
       const g = n => n == null ? '—' : `${Math.round(n * 100) / 100} ms`, ms = x => x ? `p50 ${g(x.p50)} p95 ${g(x.p95)} p99 ${g(x.p99)} mean ${g(x.mean)}` : '—';
       out.push(`  world ${w.canvas}: frame ${ms(w.perf.frameMs)} · tick ${ms(w.perf.tickMs)} · feed ${ms(w.perf.feedMs)} · encode ${ms(w.perf.encodeMs)}`);
     }
-    for (const l of r.late ?? []) out.push(`  t=${l.t} late: ${l.missed} missed (${l.interval} ms)${l.overrun ? ` · main ${l.overrun} ms past the target` : ''} · seq ${l.seq ? l.seq.join('..') : '—'}${l.apply != null ? ` · apply ${l.apply}` : ''}${l.layout != null ? ` · layout ${l.layout}` : ''}${l.loaf ? ` · loaf script ${l.loaf.script}${l.loaf.styleLayout != null ? ` style+layout ${l.loaf.styleLayout}` : ''}` : ''}${l.phases ? ` · ${[...l.phases].sort((a, b) => b.ms - a.ms).map(p => `${p.phase} ${p.ms}`).join(' ')} unattributed ${l.unattributed}` : ''}`);
+    for (const l of r.late ?? []) out.push(`  t=${l.t} late: ${l.missed} missed (${l.interval} ms)${l.overrun ? ` · committed ${l.overrun} ms late` : ''} · seq ${l.seq ? l.seq.join('..') : '—'}${l.apply != null ? ` · apply ${l.apply}` : ''}${l.layout != null ? ` · layout ${l.layout}` : ''}${l.loaf ? ` · loaf script ${l.loaf.script}${l.loaf.styleLayout != null ? ` style+layout ${l.loaf.styleLayout}` : ''}` : ''}${l.phases ? ` · ${[...l.phases].sort((a, b) => b.ms - a.ms).map(p => `${p.phase} ${p.ms}`).join(' ')} unattributed ${l.unattributed}` : ''}`);
     return out.join('\n');
   }
   const round = x => typeof x === 'number' ? Math.round(x * 100) / 100 : x;
@@ -912,7 +914,7 @@ export function renderTrace(t) {
       while (from > 0 && at - from < 5 && !lines[from - 1].includes(' frame late at ')) from--;
       const near = at < 0 ? [] : lines.slice(from, at);
       const n = r.seq ? r.seq[1] - r.seq[0] + 1 : 0;
-      out.push(`  late at ${r.t}: ${r.missed} missed (${r.interval} ms)${r.overrun ? ` · main ${r.overrun} ms past the target` : ''} · ${r.seq ? `${n} transaction${n === 1 ? '' : 's'} (seq ${r.seq.join('..')})` : 'no transaction range'}${r.batches ? ` · ${r.batches} batch${r.batches === 1 ? '' : 'es'}` : ''}${r.apply ? ` · apply ${r.apply}` : ''}${r.layout != null ? ` · layout ${r.layout}` : ''}${r.paint != null ? ` · paint ${r.paint}` : ''}${r.loaf ? ` · loaf script ${r.loaf.script}${r.loaf.styleLayout != null ? ` style+layout ${r.loaf.styleLayout}` : ''}` : ''}${at < 0 ? ' · its journal line is gone (the ring turned over)' : ` · ${near.length} journal line${near.length === 1 ? '' : 's'} before it`}`);
+      out.push(`  late at ${r.t}: ${r.missed} missed (${r.interval} ms)${r.overrun ? ` · committed ${r.overrun} ms late` : ''} · ${r.seq ? `${n} transaction${n === 1 ? '' : 's'} (seq ${r.seq.join('..')})` : 'no transaction range'}${r.batches ? ` · ${r.batches} batch${r.batches === 1 ? '' : 'es'}` : ''}${r.apply ? ` · apply ${r.apply}` : ''}${r.layout != null ? ` · layout ${r.layout}` : ''}${r.paint != null ? ` · paint ${r.paint}` : ''}${r.loaf ? ` · loaf script ${r.loaf.script}${r.loaf.styleLayout != null ? ` style+layout ${r.loaf.styleLayout}` : ''}` : ''}${at < 0 ? ' · its journal line is gone (the ring turned over)' : ` · ${near.length} journal line${near.length === 1 ? '' : 's'} before it`}`);
       // The main thread's host phases inside the interval, innermost charged, and the hatch calls that overlapped it.
       if (r.phases) out.push(`    of its ${r.interval} ms: ${[...[...r.phases].sort((a, b) => b.ms - a.ms).map(p => `${p.phase} ${p.ms}${p.segments > 1 ? ` (${p.segments})` : ''}`), `unattributed ${r.unattributed}`].join(' · ')}${r.phasesCoverage ? ' · recording does not reach its start' : ''}`);
       if (r.hatches?.length) out.push(`    hatches: ${r.hatches.map(h => `${h.hatch} ${h.ms} ms (${h.calls})`).join(' · ')}${r.coverage ? ' · partial' : ''}`);
@@ -968,20 +970,27 @@ export function renderFrameHealthMetrics(report) {
     'Bounds include the lower value and exclude the upper value. A frame is a callback that started frame work, timed from the display link; presentation, Core Animation commits, input latency and GPU execution remain unmeasured, so a proxy pass covers callbacks and Exact\'s own work only.'].join('\n');
 }
 
+/** Exact's frame clock's users, from bit 40 of a screen's row (`FrameClock.Order`) */
+const SCREEN_ASKERS = ["the session's clock", "a list's offset correction", 'a navigation reveal', 'the scroll pump', 'heavy leaves', 'a live SVG filter', 'a resize grip'];
+const SCREEN_COLUMNS = ['sequence', 'capture', 'generation', 'age_us', 'flags', 'target_offset_us', 'callback_us', 'before_callback_us', 'after_offset_us', 'after_callback_us',
+  'waited_us', 'exact_us', 'card_us', 'layouts'];
+
 /** Read measured boundaries before suggesting causes. Null is missing evidence, never zero cost. */
 export function renderFrameHealthReport(report) {
   if (report.error) return `frame health unavailable: ${report.error}${report.retryAfterMs ? ` · retry after ${report.retryAfterMs} ms` : ''}`;
   const { columns, hitches } = report;
-  if (!Array.isArray(columns) || columns.length !== 23 || !Array.isArray(hitches) || hitches.length > 16 ||
-      Buffer.byteLength(JSON.stringify(report), 'utf8') > 4000 || new Set(columns).size !== columns.length) {
-    throw new Error('Frame health report has an invalid structure or exceeds 4 KB. Export it again from Exact.');
-  }
-  const expected = ['sequence', 'capture', 'generation', 'age_us', 'flags', 'target_offset_us', 'period_us', 'requested_period_us', 'gap_us', 'callback_us',
+  // The screen's frames (`ui-update`) have no frame times and none of Exact's owner or apply boundaries
+  const screen = report.source === 'ui-update';
+  const expected = screen ? SCREEN_COLUMNS : ['sequence', 'capture', 'generation', 'age_us', 'flags', 'target_offset_us', 'period_us', 'requested_period_us', 'gap_us', 'callback_us',
     'before_gap_us', 'before_callback_us', 'after_offset_us', 'after_gap_us', 'after_callback_us',
     'owner_queued_offset_us', 'owner_began_offset_us', 'owner_finished_offset_us', 'main_landed_offset_us',
     'apply_began_offset_us', 'apply_finished_offset_us', 'work_target_offset_us', 'operations'];
+  if (!Array.isArray(columns) || columns.length !== expected.length || !Array.isArray(hitches) || hitches.length > 16 ||
+      Buffer.byteLength(JSON.stringify(report), 'utf8') > 4000 || new Set(columns).size !== columns.length) {
+    throw new Error('Frame health report has an invalid structure or exceeds 4 KB. Export it again from Exact.');
+  }
   if (expected.some((name, index) => name !== columns[index])) throw new Error('Frame health report has unknown timing columns. Use a reader from the same Exact version.');
-  const out = [`frame health · ${report.identity?.app ?? 'app'} · callback/apply proxies · ${report.qualification ?? 'unqualified'}`,
+  const out = [`frame health · ${report.identity?.app ?? 'app'} · ${screen ? "the screen's UI updates against UIKit's deadlines" : 'callback/apply proxies'} · ${report.qualification ?? 'unqualified'}`,
     `retained ${hitches.length} · overwritten ${report.retention?.overwrittenSinceClear ?? '?'} · expired ${report.retention?.expiredAtRead ?? '?'} · omitted for budget ${report.retention?.omittedForBudget ?? '?'} · capture ${report.scope?.armed ? 'armed' : 'paused'}`];
   if (!report.available) out.push(`unavailable: ${report.unavailableReason ?? 'unknown coverage'}`);
   const identity = report.identity ?? {};
@@ -1004,6 +1013,15 @@ export function renderFrameHealthReport(report) {
     const workload = bit(23) ? ['motion', 'spatial', 'canvas', 'frame tasks', 'fill pending', 'tick pending', 'hatch frames'].filter((_, index) => bit(index + 16)).join(', ') || 'none at observation' : 'unknown';
     const thermal = ['nominal', 'fair', 'serious', 'critical'][Math.floor(event.flags / 2 ** 32) % 4];
     const reasons = [event.flags & 1 ? 'callback gap' : null, event.flags & 2 ? 'callback target overrun' : null, event.flags & 4 ? 'tick apply target overrun' : null].filter(Boolean);
+    if (screen) {
+      const next = event.flags & 8 ? `next update's effective start ${ms(event.after_offset_us)} after this one's, work ${ms(event.after_callback_us)}` : 'next update unseen';
+      const rest = event.exact_us == null || event.card_us == null ? null : Math.max(0, event.callback_us - event.exact_us - event.card_us);
+      out.push(`#${event.sequence} / capture ${event.capture} / generation ${event.generation} · ${ms(event.age_us)} ago · ${event.flags & 2 ? 'commit seen past its deadline' : 'timing event'}`,
+        `  work ${ms(event.callback_us)} · deadline ${ms(Math.abs(event.target_offset_us))} ${event.target_offset_us < 0 ? 'before' : 'after'} its work's effective start, the commit less its work · previous update's work ${ms(event.before_callback_us || null)} · ${next}`,
+        `  of its work: Exact's host phases ${ms(event.exact_us)} · the card's ${ms(event.card_us)} · the rest ${ms(rest)} · nodes laid out ${event.layouts ?? 'unknown'} · the main thread also waited ${ms(event.waited_us)} in the update`,
+        `  workload ${workload} · asked by ${SCREEN_ASKERS.filter((_, index) => bit(index + 40)).join(', ') || 'none of Exact\'s frame clock (UIKit or the system)'} · thermal ${thermal} · low power ${bit(34)}${bit(36) ? ' · card dragged' : ''}`);
+      continue;
+    }
     out.push(`#${event.sequence} / capture ${event.capture} / generation ${event.generation} · ${ms(event.age_us)} ago · ${reasons.join(', ') || 'timing event'}`,
       `  gap ${ms(event.gap_us || null)} / scheduled ${ms(event.period_us || null)} · requested ${ms(event.requested_period_us || null)} · callback ${ms(event.callback_us || null)} · target offset ${ms(event.target_offset_us)}`,
       `  ${event.flags & 32 ? 'largest interval apply' : 'last observed apply'} ${ended} · owner queue ${ms(elapsed('owner_began_offset_us', 'owner_queued_offset_us'))} · owner wall ${ms(elapsed('owner_finished_offset_us', 'owner_began_offset_us'))} · main wait ${ms(elapsed('main_landed_offset_us', 'owner_finished_offset_us'))} · apply ${ms(elapsed('apply_finished_offset_us', 'apply_began_offset_us'))} · operations ${event.operations ?? 'unknown'}`,

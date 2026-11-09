@@ -342,6 +342,9 @@ final class FieldCell: NSTextFieldCell {
         let node = controlView?.superview as? NodeView, appKit = super.titleRect(forBounds: rect)
         return node?.nativeEditorRect(in: rect) ?? node?.authoredEditorRect(appKit, in: rect) ?? appKit
     }
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        drawingAntialiased(fieldNode?.drawsAntialiased == true) { super.drawInterior(withFrame: cellFrame, in: controlView) }
+    }
     /// A borderless cell puts the field editor at the rect it is given (the
     /// field's bounds), not at its drawing rect: an author-drawn field's
     /// editor gets its line's rect, so the text and the placeholder stand
@@ -389,6 +392,9 @@ final class SecureFieldCell: NSSecureTextFieldCell {
     override func titleRect(forBounds rect: NSRect) -> NSRect {
         let node = controlView?.superview as? NodeView, appKit = super.titleRect(forBounds: rect)
         return node?.nativeEditorRect(in: rect) ?? node?.authoredEditorRect(appKit, in: rect) ?? appKit
+    }
+    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
+        drawingAntialiased(fieldNode?.drawsAntialiased == true) { super.drawInterior(withFrame: cellFrame, in: controlView) }
     }
     /// As `FieldCell`'s.
     override func select(withFrame rect: NSRect, in controlView: NSView, editor textObj: NSText, delegate: Any?, start selStart: Int, length selLength: Int) {

@@ -837,12 +837,6 @@ pub(super) fn presence_decls(css: &mut String) -> String {
 }
 
 impl Em<'_> {
-    /// A `markup="markdown"` text's source, built into spans (rt.js `md`).
-    pub(crate) fn markdown(&mut self, e: &str, f: &str) {
-        let md = self.uses.rt("md");
-        let _ = write!(self.out, "{md}({e},{f});");
-    }
-
     /// What an element needs once made: a canvas's surface, a native
     /// module's mount, a hatched node's page-module hatch (`data-hatch`
     /// among its static attributes), and the
@@ -1295,20 +1289,17 @@ mod tests {
                 .unwrap_or_else(|| panic!("no bound {row} names a metric"));
             crate::style::metric_map(&plan, plan.code(binding.expr)).unwrap()
         };
-        // The row's content starts at its text, after a symbol where one is
-        // shown: its padding, the row spanning its card.
+        // The row's content starts at its inset, the row spanning its card.
         assert_eq!(
             run(
                 &named("padding_left"),
                 &[
                     "-exact-grouped-row-inset",
-                    "-exact-grouped-row-inset-symbol",
                     "-exact-grouped-button-padding-start",
                     "12px"
                 ]
             ),
-            // A ramp's value is the 16-point body's in `rem`, so it follows the root size.
-            serde_json::json!([16, "3.4375rem", 16, "12px"])
+            serde_json::json!([16, 16, "12px"])
         );
         // Red when destructive, by its role; the label's colour is no metric.
         assert_eq!(

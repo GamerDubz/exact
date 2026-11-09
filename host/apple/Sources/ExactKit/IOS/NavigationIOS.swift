@@ -157,6 +157,8 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
     /// and dimming belongs to UIKit's presentation.
     func paintBackdrop() {
         guard isViewLoaded else { return }
+        // The route's view takes its accent as its tint, which its backdrop in the tint is resolved by
+        assign(view, \.tintColor, node.ownAccent)
         let modal = node.props["navigationPresentation"] == "modal"
         let key = modal
             ? [ownBackdrop(dark: false), ownBackdrop(dark: true)]
@@ -172,16 +174,19 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
         #endif
         view.backgroundColor = UIColor { [weak self] traits in
             let dark = traits.userInterfaceStyle == .dark
-            let colour = modal ? self?.ownBackdrop(dark: dark) : self?.backdrop(dark: dark)
+            let colour = modal ? self?.ownBackdrop(dark: dark, in: traits) : self?.backdrop(dark: dark, in: traits)
             return colour.map { TextEngine.color($0) } ?? (modal ? .clear : system)
         }
     }
 
-    /// The route's own background, if it paints one.
-    private func ownBackdrop(dark: Bool) -> [Double]? {
+    /// The route's own background, if it paints one; in `traits`, as the view's dynamic colour
+    /// resolves it, the tint by the view's (`channels(_:in:)`), which is the route's accent.
+    private func ownBackdrop(dark: Bool, in traits: UITraitCollection? = nil) -> [Double]? {
         if node.groundIsSheets { return nil }
-        // As written, never greyed: the view keeps the colour its provider gave (TintDimmingIOS.swift)
-        return node.undimmedChannels("background_color", dark: dark).flatMap { $0.count < 4 || $0[3] > 0 ? $0 : nil }
+        return Self.painted(node, dark: dark, in: traits)
+    }
+    private static func painted(_ node: NodeView, dark: Bool, in traits: UITraitCollection?) -> [Double]? {
+        (traits.map { node.channels("background_color", in: $0) } ?? node.channels("background_color", dark: dark)).flatMap { $0.count < 4 || $0[3] > 0 ? $0 : nil }
     }
 
     /// What shows behind the route where it paints nothing: its own
@@ -189,9 +194,9 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
     /// tabpanel's, then the boxes up to the root — as the web shows them
     /// through a transparent route (a root's
     /// `-exact-grouped-background` under every screen).
-    func backdrop(dark: Bool) -> [Double]? {
-        let painted = { (n: NodeView) in n.undimmedChannels("background_color", dark: dark).flatMap { $0.count < 4 || $0[3] > 0 ? $0 : nil } }
-        if let own = ownBackdrop(dark: dark) { return own }
+    func backdrop(dark: Bool, in traits: UITraitCollection? = nil) -> [Double]? {
+        let painted = { (n: NodeView) in Self.painted(n, dark: dark, in: traits) }
+        if let own = ownBackdrop(dark: dark, in: traits) { return own }
         guard let host, let root = host.container else { return nil }
         var next: UIView? = host.logicalParent(of: node)
         while let v = next {
@@ -312,11 +317,39 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
     /// The stack it is in: its navigation controller, or a tab's held stack.
     var stack: UIViewController? { navigationController ?? (parent as? HeldStack) }
 
+    private var projectingContentScrollView = false
+    private(set) var nativeContentScrollEdges: NSDirectionalRectEdge = []
+    var nativeContentScroller: NodeView? {
+        // UIKit's getter reports explicit selection only; nil keeps automatic scroll targeting.
+        guard let selected = contentScrollView(for: .top) else { return Presenter.firstVerticalScroller(under: node) }
+        var owner = (selected as? Viewport)?.documentNode
+        var ancestor = selected.superview
+        while owner == nil, let view = ancestor {
+            if let node = view as? NodeView, node.scrollView === selected { owner = node }
+            ancestor = view.superview
+        }
+        return owner.flatMap { $0 === node || $0.isDescendant(of: node) ? $0 : nil }
+    }
+
+    /// Authored layout supplies defaults; an app's native selection owns that edge, including nil.
+    func projectContentScrollView(_ scrollView: UIScrollView?, for edge: NSDirectionalRectEdge) {
+        guard nativeContentScrollEdges.intersection(edge).isEmpty else { return }
+        projectingContentScrollView = true
+        defer { projectingContentScrollView = false }
+        setContentScrollView(scrollView, for: edge)
+    }
+
     // A held stack's tab bar follows the route's scroll views as a navigation controller's follows its top's.
     override func setContentScrollView(_ scrollView: UIScrollView?, for edge: NSDirectionalRectEdge) {
+        if !projectingContentScrollView { nativeContentScrollEdges.formUnion(edge) }
         super.setContentScrollView(scrollView, for: edge)
         (parent as? HeldStack)?.setContentScrollView(scrollView, for: edge)
-        if edge == .top { followTopEdge(scrollView) }
+        if edge.contains(.top) {
+            followTopEdge(scrollView)
+            #if os(iOS)
+            if !projectingContentScrollView { host?.presenter.syncScrollsToTop() }
+            #endif
+        }
     }
 
     private var topEdgeWatch: NSKeyValueObservation?
@@ -347,6 +380,7 @@ final class RouteController: UIViewController, UIScrollViewDelegate {
 }
 
 final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureRecognizerDelegate {
+    weak var scrollsToTopSelection: UIScrollView?
     unowned let presenter: Presenter
     /// The selected tab's stack. An app's tab container can show a stack
     /// without appearance callbacks, so restart its reveal here.
@@ -400,9 +434,9 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
     /// The tabs and stacks the items were last made from, made again when
     /// the size class (a path glyph's size) changes.
     var tabItemsSource: (NavigationTabs, [UIViewController])?
-    /// The bar's tint as last written: the tablist's accent, light and dark.
-    var tabTint: [[Double]?]?
-    var tabTintOwn = false
+    /// The bar's tint as last written as a value: the selected tab's own tint, light and dark; nil
+    /// where the bar takes an accent as its tint.
+    var tabTint: [[Double]]?
     let tabProxy = TabDelegateProxy()
     /// A context menu's commit pushes without the stack's animation: UIKit
     /// animates it (`.pop`). The selected route's key tells
@@ -650,15 +684,15 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
         guard primaryOwner == nil, !syncing, presenter.session?.view?.window != nil else { giveBackBootCover(); return }
         syncing = true
         defer { syncing = false }
-        guard let p = projection(batch) else { giveBackBootCover(); return }
+        guard let p = ApplyProfile.time("nav.projection", { projection(batch) }) else { giveBackBootCover(); return }
         // After the projection, whose first `reset` clears the covers.
         _ = adoptBootCover()
         let parts = NavigationRules.segments(presentations: p.routes[...p.selected].map { $0.props["navigationPresentation"] })
-        installPrimary(p, first: Array(p.chosen[parts[0]]))
-        primaryOwner?.view.layoutIfNeeded()
+        ApplyProfile.time("nav.primary") { installPrimary(p, first: Array(p.chosen[parts[0]])) }
+        ApplyProfile.time("nav.layout") { primaryOwner?.view.layoutIfNeeded() }
         // The content area the bar leaves reaches layout in this turn, before
         // the first frame.
-        reportCovers()
+        ApplyProfile.time("nav.covers") { reportCovers() }
         refitForBars()
     }
 
@@ -784,7 +818,7 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
                 // A press that pushed may hand its control's focus to the arriving route's first autofocus (PressHandoffIOS).
                 if pushOrPop || arrives { presenter.pressShows((stack.last as? RouteController)?.node) }
             }
-            nav.view.layoutIfNeeded()
+            ApplyProfile.time("nav.layout") { nav.view.layoutIfNeeded() }
         }
         unanimated = false
         if mounted.count > common {
@@ -1024,8 +1058,12 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
         let transition: [String: Any] = ["interactive": navigation?.transitionCoordinator?.isInteractive ?? false,
                                          "phase": changing || pendingSync || presenter.modals.inTransition ? "in-progress" : lastTransition]
         let root = container ?? presenter.root.subviews.first as? NodeView
+        let top = navigation?.topViewController as? RouteController
         return ["route": root?.props["navigationKey"] ?? NSNull(), "stack": stack, "transition": transition,
-                "nativeBack": nativeBack ?? NSNull()]
+                "nativeBack": nativeBack ?? NSNull(), "barHeight": Agent.r2(navigation?.navigationBar.bounds.height ?? 0),
+                "contentScroller": top.flatMap { contentScroller(of: $0).map { Int($0.id) } } ?? NSNull(),
+                "collapseScroller": top?.collapseScroll.map { Int($0.id) } ?? NSNull(),
+                "arrangedScrollers": top.map { arrangementScrollers(in: $0, top: true).map { Int($0.id) } } ?? []]
     }
 
     /// Whether a route or a logical ancestor of it (`eventParent`) is
@@ -1245,6 +1283,14 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
         // A cancelled swipe calls
         // willShow again for its source, in the transition already begun.
         guard let transition = pushOrPop(on: navigationController), transition.viewController(forKey: .to) === viewController else { return }
+        // UIKit's own (its Back button, its menu, a swipe): Observe's render
+        // mark is this transition's first frame, unless it is cancelled.
+        if !syncing {
+            NavigationMarks.shared.platformBeganShowing()
+            transition.animate(alongsideTransition: nil) { context in
+                if context.isCancelled { NavigationMarks.shared.platformCancelled() }
+            }
+        }
         // As the swipe begins: an update may remove its source's node while
         // the finger is down
         let swipe: Swipe? = transition.initiallyInteractive
@@ -1297,8 +1343,7 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
 
     /// A push or pop of the stack navigation follows is over: the deferred
     /// work runs and a Back UIKit performed reaches the router. One on a
-    /// stack navigation stopped following (another tab was selected, or
-    /// the stacks were reset) is not navigation's.
+    /// stack navigation stopped following (another tab was selected, or the stacks were reset) is not navigation's.
     private func transitionEnded(_ navigationController: UINavigationController,
                                  swipe: Swipe?, cancelled: Bool) {
         // Finish the departed search field while its authored handlers still exist
@@ -1336,8 +1381,7 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
         // The route a pop took away keeps its block until it leaves the stack
         defer { presenter.owners.publish() }
         defer {
-            // Tree updates during UIKit's transition retain their latest
-            // intent. Apply it once the native stack is available again.
+            // Tree updates during UIKit's transition retain their latest intent. Apply it once the native stack is available again.
             if pendingSync {
                 pendingSync = false
                 sync(Batch(ops: [], timers: false, motion: false, clock: nil, error: nil))
@@ -1352,10 +1396,8 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
             #if os(iOS)
             presenter.syncScrollsToTop() // the route now on top owns the status-bar tap
             #endif
-            // Settled on a stack's root: once UIKit has finished the
-            // transition (its own bar restoration included), a root whose
-            // arrival no projection has handled yet reconciles the bar with
-            // its tablist.
+            // Settled on a stack's root: once UIKit has finished the transition (its own bar restoration included), a root whose
+            // arrival no projection has handled yet reconciles the bar with its tablist.
             DispatchQueue.main.async { [weak self, weak navigationController] in
                 if let navigationController {
                     self?.settleTablist(navigationController)
@@ -1437,6 +1479,10 @@ final class NavigationHost: NSObject, UINavigationControllerDelegate, UIGestureR
         pendingPress?.pending = false; pendingPress?.settle(); pendingPress = nil
         lastTransition = "idle"
         if clearFocus { presenter.cancelPendingFocus() }
+        #if os(iOS)
+        scrollsToTopSelection?.scrollsToTop = false
+        scrollsToTopSelection = nil
+        #endif
         // The routes no stack holds now give their blocks back
         presenter.owners.publish()
     }

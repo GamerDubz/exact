@@ -65,6 +65,21 @@ final class ChooserMacTests: XCTestCase {
         wait(for: [turned], timeout: 5)
     }
 
+    func testAnOpenChooserRejectsNewActivePropertiesWithoutReplacingItsMenu() throws {
+        let p = chooser(["One", "Two"], cancels: 0)
+        defer { p.menus.reset() }
+        p.press(1)
+        let entry = try XCTUnwrap(p.menus.entries.last)
+        let menu = try XCTUnwrap(entry.menu), item = menu.items[1]
+        let row = try XCTUnwrap(p.views[3])
+        XCTAssertNil(row.nativeActiveRefusals["NSMenuItem"])
+        p.apply(wireBatch([["op": "style", "id": 3, "style": ["press_opacity_to": 0.4]]]))
+        XCTAssertTrue(p.menus.entries.last === entry)
+        XCTAssertTrue(entry.menu === menu)
+        XCTAssertTrue(menu.items[1] === item)
+        XCTAssertTrue(row.nativeActiveRefusals["NSMenuItem"]?.contains("opacity") == true)
+    }
+
     func testExplicitSourceWithoutInvokerTargetKeepsTheChooserValid() throws {
         let p = chooser(["One", "Two"], cancels: 0)
         defer { p.menus.reset() }
@@ -391,12 +406,12 @@ final class ChooserMacTests: XCTestCase {
             guard let menu = note.object as? NSMenu, menu.items.contains(where: { $0.title == "Waze" }) else { return }
             seen = true
             RunLoop.current.perform(inModes: [.eventTracking, .default]) {
-                frame = NSApp.windows.filter { $0.isVisible && $0.level.rawValue >= NSWindow.Level.popUpMenu.rawValue }
-                    .map(\.frame).max { $0.height < $1.height }
+                frame = ContextMenuMacTests.shownMenuFrame()
                 menu.cancelTracking()
             }
         }
         defer { NotificationCenter.default.removeObserver(token) }
+        waitFor("an earlier test's menu leaves the screen") { ContextMenuMacTests.shownMenuFrame() == nil }
         p.press(1)
         let done = Date(timeIntervalSinceNow: 5)
         while (!seen || p.menus.isOpen(p.views[2]!)) && Date() < done { RunLoop.main.run(mode: .default, before: Date(timeIntervalSinceNow: 0.02)) }

@@ -689,6 +689,7 @@ package final class SwipeActionsHost {
         #if !os(tvOS)
         fileprivate func configuration(_ controls: [NodeView]) -> UISwipeActionsConfiguration? {
             let actions = controls.filter(enabled).map { target in
+                target.rejectNativeActiveProperties(on: "UIContextualAction")
                 let destructive = target.props["destructive"] == "true"
                 let action = UIContextualAction(style: destructive ? .destructive : .normal, title: nil) { [weak self, weak target] _, _, complete in
                     guard let self, let target, self.host.presenter.views[target.id] === target, self.enabled(target) else { complete(false); return }
@@ -703,8 +704,7 @@ package final class SwipeActionsHost {
                     // only inherits leaves; a destructive one sets none,
                     // whatever its accent (UIKit's red); its symbol, recorded
                     // for discovery as a snapshot is.
-                    if !destructive, target.wrote("accent_color"),
-                       let accent = target.channels("accent_color").map({ TextEngine.color($0) }) {
+                    if !destructive, target.wrote("accent_color"), let accent = target.carriedAccent {
                         action.backgroundColor = accent
                     }
                     if let symbol = target.face?.symbol, let image = FaceSymbol.image(symbol) {
@@ -725,10 +725,9 @@ package final class SwipeActionsHost {
                 // Its authored background, else the accent its author wrote
                 // on it, as a native action's (Mail's Flag is orange), else
                 // UIKit's for its style.
-                if let fill = target.undimmedCGColor("background_color") {
-                    action.backgroundColor = UIColor(cgColor: fill)
-                } else if !destructive, target.wrote("accent_color"),
-                          let accent = target.channels("accent_color").map({ TextEngine.color($0) }) {
+                if let fill = target.carriedColor("background_color") {
+                    action.backgroundColor = fill
+                } else if !destructive, target.wrote("accent_color"), let accent = target.carriedAccent {
                     action.backgroundColor = accent
                 }
                 // A custom action's symbol is a system image, as a native one's
