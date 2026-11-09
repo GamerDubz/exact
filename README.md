@@ -26,23 +26,22 @@ agent can build it, run it, see it, and test it on every one of them.**
 <table>
   <tr>
     <th>Web</th>
+    <th>iOS</th>
     <th>macOS</th>
-    <th>Linux</th>
   </tr>
-  <tr>
-    <td><img src="docs/screenshots/caltrain-web.webp" width="250" alt="Caltrain in Chrome"></td>
-    <td><img src="docs/screenshots/caltrain-macos.webp" width="250" alt="Caltrain as a native macOS app"></td>
-    <td><img src="docs/screenshots/caltrain-linux.webp" width="250" alt="Caltrain painted by the Linux host"></td>
+  <tr valign="top">
+    <td><img src="docs/screenshots/softwear-web.webp" width="360" alt="Softwear's hoodies page in Chrome"></td>
+    <td><img src="docs/screenshots/softwear-ios.webp" width="160" alt="Softwear's hoodies page as a native iOS app"></td>
+    <td><img src="docs/screenshots/softwear-macos.webp" width="290" alt="Softwear's hoodies page as a native macOS app"></td>
   </tr>
-  <tr>
+  <tr valign="top">
     <td>The browser's own DOM and CSS</td>
-    <td>AppKit views, CoreText, Metal sky</td>
-    <td>Painted by vello / tiny-skia, headless here</td>
+    <td>UIKit views, native controls and the system's tab bar</td>
+    <td>AppKit views and native controls</td>
   </tr>
 </table>
 
-<sub>One <code>app.contract</code>, three hosts, captured by the agent driver from this
-checkout. (The aurora behind the macOS and web versions is an optional GPU module.)</sub>
+<sub>One <code>app.contract</code>, the same screen on three hosts, captured by the agent driver. <a href="https://github.com/expo/exact-templates/tree/main/softwear">Softwear</a> is a demonstration store you can generate from <a href="https://github.com/expo/exact-templates">exact-templates</a>: it shows Alternative Apparel's catalog, is not affiliated with that brand, and takes no real orders or payments.</sub>
 
 Exact is a cross-platform application runtime. You describe your interface in
 **Contract**, a small declarative language, and you write your data logic in
