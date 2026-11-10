@@ -27,9 +27,8 @@ supports plugins, or copies the skill file for a client that does not. Absent cl
 skipped; a skill file that differs from this version's is never overwritten. Options:
 `--yes`, `--client claude|codex`, `--mode plugin|skill`.
 
-Without a clone, `npx github:GamerDubz/exact-plugin` does the same from the small standalone
-repo. Both register a marketplace named `exact-agent-marketplace`, so use one source per
-machine.
+The small standalone plugin repo `GamerDubz/exact-plugin` registers a marketplace with the same
+name, `exact-agent-marketplace`, so use one source per machine.
 
 ## Sync from upstream
 
