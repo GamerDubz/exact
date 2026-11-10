@@ -19,6 +19,18 @@ claude plugin install exact@exact-agent-marketplace
 
 Codex: add `GamerDubz/exact` as a marketplace, then enable `exact@exact-agent-marketplace`.
 
+## Automatic install
+
+From a clone of this fork, `node plugins/exact/scripts/install.mjs` detects Claude Code and
+Codex, shows a plan, and after approval installs the marketplace plugin for a client that
+supports plugins, or copies the skill file for a client that does not. Absent clients are
+skipped; a skill file that differs from this version's is never overwritten. Options:
+`--yes`, `--client claude|codex`, `--mode plugin|skill`.
+
+Without a clone, `npx github:GamerDubz/exact-plugin` does the same from the small standalone
+repo. Both register a marketplace named `exact-agent-marketplace`, so use one source per
+machine.
+
 ## Sync from upstream
 
 ```sh
